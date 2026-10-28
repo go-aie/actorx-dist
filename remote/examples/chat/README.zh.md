@@ -21,10 +21,10 @@ python3 -m venv /tmp/actorx-remote-demo-venv
 nats-server -c examples/nats.conf -sd /tmp/actorx-remote-chat
 ```
 
-终端 2，启动与 Ping/Pong 共用的通用 gateway：
+终端 2，启动与 Counter 共用的通用 gateway：
 
 ```sh
-GOWORK=off go run ./remote/examples/pingpong/gateway \
+GOWORK=off go run ./remote/examples/counter/gateway \
   -nats nats://127.0.0.1:4222 -listen 127.0.0.1:8080
 ```
 
@@ -55,7 +55,7 @@ provider 首次输出 `Chat actor created` 和 `Chat turn 1`。再次运行相�
 
 ## 实现
 
-[provider.py](provider.py) 实现 `handle_stream(message)` 异步生成器，与 Ping/Pong 一样使用 `register(type, factory)`。注册保存工厂，首次 Stream 才创建对象。六段固定文本超过四项发送窗口，慢消费会经 gateway 和 actorx-dist 传递背压。
+[provider.py](provider.py) 实现 `handle_stream(message)` 异步生成器，与 Counter 一样使用 `register(type, factory)`。注册保存工厂，首次 Stream 才创建对象。六段固定文本超过四项发送窗口，慢消费会经 gateway 和 actorx-dist 传递背压。
 
 [consumer.py](consumer.py) 使用 `async with actor.stream(...) as chunks` 和 `async for`。正常迭代耗尽表示收到明确终态且全部项已处理；中途 `break`、异常或 Runtime 关闭会取消未完成流。每个流默认总期限五秒，`timeout` 可设为至多 60 秒；本示例为 30 秒。
 
@@ -69,4 +69,4 @@ gateway 和 SDK 配套使用 `actorx.remote/v1`。已有 Stream-capable Type 在
 
 - [Python SDK](../../sdk/python/README.zh.md)
 - [Remote 协议：Stream](../../docs/protocol.zh.md#stream-过程)与[运行模型](../../docs/runtime.zh.md)
-- [Call 版 Ping/Pong](../pingpong/README.zh.md)
+- [Call 版 Counter](../counter/README.zh.md)

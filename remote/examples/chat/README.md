@@ -21,10 +21,10 @@ Terminal 1, internal NATS:
 nats-server -c examples/nats.conf -sd /tmp/actorx-remote-chat
 ```
 
-Terminal 2, the general gateway shared with Ping/Pong:
+Terminal 2, the general gateway shared with Counter:
 
 ```sh
-GOWORK=off go run ./remote/examples/pingpong/gateway \
+GOWORK=off go run ./remote/examples/counter/gateway \
   -nats nats://127.0.0.1:4222 -listen 127.0.0.1:8080
 ```
 
@@ -55,7 +55,7 @@ The provider prints `Chat actor created` and `Chat turn 1` on the first request.
 
 ## Implementation
 
-[provider.py](provider.py) implements the `handle_stream(message)` async generator and uses `register(type, factory)`, just like Ping/Pong. Registration saves the factory; the first Stream creates the object. Six fragments exceed the four-item sending window. Slow consumption propagates backpressure through the gateway and actorx-dist.
+[provider.py](provider.py) implements the `handle_stream(message)` async generator and uses `register(type, factory)`, just like Counter. Registration saves the factory; the first Stream creates the object. Six fragments exceed the four-item sending window. Slow consumption propagates backpressure through the gateway and actorx-dist.
 
 [consumer.py](consumer.py) uses `async with actor.stream(...) as chunks` and `async for`. Exhaustion means an explicit terminal was received and all items were processed. Context exit after a break or exception, and Runtime shutdown, cancel unfinished streams. The default total deadline is five seconds; `timeout` accepts up to 60 seconds. This example uses 30 seconds.
 
@@ -69,4 +69,4 @@ The gateway and SDK use `actorx.remote/v1` together. An existing Stream-capable 
 
 - [Python SDK](../../sdk/python/README.md)
 - [Remote protocol: Stream](../../docs/protocol.md#stream-exchange) and [runtime model](../../docs/runtime.md)
-- [Call-based Ping/Pong](../pingpong/README.md)
+- [Call-based Counter](../counter/README.md)

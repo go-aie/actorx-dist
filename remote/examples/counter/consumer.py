@@ -16,20 +16,20 @@ async def main(args: argparse.Namespace) -> None:
 
         # Reusing the same Addr also reuses the remote Actor's state.
         for _ in range(args.count):
-            pong = await actor.call({"text": "ping"})
-            print(json.dumps(pong), flush=True)
+            count = await actor.call({"n": 5})
+            print(json.dumps(count), flush=True)
 
         # A different logical ID must have its own instance and counter.
         other = runtime.addr(args.type, args.id + "-other")
-        pong = await other.call({"text": "ping"})
-        print(json.dumps(pong), flush=True)
+        count = await other.call({"n": 5})
+        print(json.dumps(count), flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", default="http://127.0.0.1:8080")
-    parser.add_argument("--type", default="demo.ping")
-    parser.add_argument("--id", default="session-42")
+    parser.add_argument("--type", default="demo.counter")
+    parser.add_argument("--id", default="orders-42")
     parser.add_argument("--count", type=int, default=2)
     args = parser.parse_args()
     if args.count < 1:

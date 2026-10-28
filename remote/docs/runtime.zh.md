@@ -2,7 +2,7 @@
 
 [English](runtime.md) | 中文
 
-Remote 在 actorx-dist 之上提供跨语言接入。[协议文档](protocol.zh.md)定义 wire 契约，[Ping/Pong 示例](../examples/pingpong/README.zh.md)提供可运行命令。
+Remote 在 actorx-dist 之上提供跨语言接入。[协议文档](protocol.zh.md)定义 wire 契约，[Counter 示例](../examples/counter/README.zh.md)提供可运行命令。
 
 ## 组件与激活
 
@@ -93,7 +93,7 @@ Go 代码属于现有 actorx-dist 模块。[Gateway](../gateway.go)接入已有 
 
 Register 在开始安装后，可能同时返回非空句柄和错误；调用方仍须 Close 并等待该句柄。关闭超时只结束本次等待，清理责任仍保留，可再次等待。
 
-SSE 要求 ResponseController 写期限与 Flush；包装 ResponseWriter 的中间件应实现 `Unwrap`。使用逐帧期限，短的全局 WriteTimeout 会中断健康注册。[gateway 入口](../examples/pingpong/gateway/main.go)展示装配与独立清理 context。
+SSE 要求 ResponseController 写期限与 Flush；包装 ResponseWriter 的中间件应实现 `Unwrap`。使用逐帧期限，短的全局 WriteTimeout 会中断健康注册。[gateway 入口](../examples/counter/gateway/main.go)展示装配与独立清理 context。
 
 ## 断线与关闭
 
@@ -113,7 +113,7 @@ Python `Runtime.close()` 关闭连接、取消并汇合 SDK 自有任务，然�
 
 当前仍处于早期开发，统一后的 gateway 和 Python SDK 保留 `actorx.remote/v1`，两端实现须配套使用。SDK 每次 POST 自动携带 `X-Actorx-Remote-Protocol: actorx.remote/v1`，并校验注册结果；HTTP 在鉴权后、分派前对缺失或不匹配的版本返回 400。删除原注册参数 `stream=True` 及所有 `capabilities` 字段。对象实现 `handle`、`handle_stream` 中的一种或两种，统一使用 `register(type, factory)`。
 
-remote wire 版本与 actorx-dist Type 契约分别管理。现在所有注册固定包含 Call、Stream、Started 绑定。原 Call-only Type 新增绑定会改变指纹：已有 Registry 上，provider 和 consumer 须同时选择新 Type，例如 `demo.ping.v2`。重启或 Unregister 不会抹掉已发布契约。原 Stream-capable Type 在 DTO 和绑定不变时保持指纹；仅重命名 Go 代理结构体不要求新 Type。详见[契约参考](../../docs/contract.zh.md)。
+remote wire 版本与 actorx-dist Type 契约分别管理。现在所有注册固定包含 Call、Stream、Started 绑定。原 Call-only Type 新增绑定会改变指纹：已有 Registry 上，provider 和 consumer 须同时选择新 Type，例如 `demo.counter.v2`。重启或 Unregister 不会抹掉已发布契约。原 Stream-capable Type 在 DTO 和绑定不变时保持指纹；仅重命名 Go 代理结构体不要求新 Type。详见[契约参考](../../docs/contract.zh.md)。
 
 开发示例可在全新隔离 NATS 存储上保留原业务 Type 名称。若之前运行已发布 Call-only 契约，使用新的开发存储目录；不清除共享 Registry 来绕过冲突。仅升级 wire 版本不会解决该冲突。
 

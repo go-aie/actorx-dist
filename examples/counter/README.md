@@ -22,3 +22,5 @@ go run ./examples/counter -role client -id another
 Send adds 2 and waits for mailbox admission; Call adds 3 and returns the accumulated value. Conditional KV ownership selects one worker for each key. Closing a client leaves the remote object alive. Ctrl-C gracefully closes each worker and joins its owned instances. All processes can use `-nats nats://SERVER:4222` to connect to the same service.
 
 CounterSpec stays beside Counter; bindings are generated with `go generate ./examples/counter`. The client role still links this program's Actor definitions. Remote Stop/Wait is covered in [lifecycle](../../docs/lifecycle.md); continue with [Button → Counter](../click/README.md) for cross-process composition.
+
+For the same counting behavior with a Python provider and HTTP consumer, see [Remote Counter](../../remote/examples/counter/README.md).

@@ -2,7 +2,7 @@
 
 English | [中文](protocol.zh.md)
 
-`actorx.remote/v1` connects consumers, a gateway and providers over HTTP/SSE. This is the complete wire reference for Call and Stream. The Python SDK manages encoding, version headers, flow control and response correlation. For a first run, start with [Ping/Pong](../examples/pingpong/README.md) or [Chat](../examples/chat/README.md), then the [SDK guide](../sdk/python/README.md).
+`actorx.remote/v1` connects consumers, a gateway and providers over HTTP/SSE. This is the complete wire reference for Call and Stream. The Python SDK manages encoding, version headers, flow control and response correlation. For a first run, start with [Counter](../examples/counter/README.md) or [Chat](../examples/chat/README.md), then the [SDK guide](../sdk/python/README.md).
 
 ## Shared model
 

@@ -48,11 +48,11 @@ flowchart LR
 
 ## 运行示例
 
-建议先运行 Ping/Pong，再用 Chat 体验流式回复。每个示例都包含环境准备、进程启动命令、预期输出和代码解释。
+建议先运行 Counter，再用 Chat 体验流式回复。每个示例都包含环境准备、进程启动命令、预期输出和代码解释。
 
 | 示例 | 学习内容 |
 | --- | --- |
-| [Ping/Pong](examples/pingpong/README.zh.md) | 注册 provider，由独立 consumer 发起 Call，观察实例复用与不同 ID 的独立状态。 |
+| [Counter](examples/counter/README.zh.md) | 对照 Go Counter：注册 Python provider，通过 Call 累加，观察状态保留与不同 ID 的独立状态。 |
 | [Chat](examples/chat/README.zh.md) | 逐段消费 Stream，通过慢消费观察背压。 |
 
 ## 使用指南与参考

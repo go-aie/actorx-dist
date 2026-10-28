@@ -48,11 +48,11 @@ Additional notes:
 
 ## Run an example
 
-Start with Ping/Pong, then try Chat for incremental replies. Each example includes setup, process commands, expected output and an explanation of the code.
+Start with Counter, then try Chat for incremental replies. Each example includes setup, process commands, expected output and an explanation of the code.
 
 | Example | What you will learn |
 | --- | --- |
-| [Ping/Pong](examples/pingpong/README.md) | Register a provider, make Calls from a separate consumer, and observe instance reuse and independent state by ID. |
+| [Counter](examples/counter/README.md) | Compare with the Go Counter: register a Python provider, add through Call, and observe retained totals and independent state by ID. |
 | [Chat](examples/chat/README.md) | Consume a Stream incrementally and observe backpressure with a slow consumer. |
 
 ## Guides and reference

@@ -22,3 +22,5 @@ go run ./examples/counter -role client -id another
 Send 增加 2，等待 mailbox 受理；Call 再增加 3，返回累计值。KV 条件写为同一个 key 确定唯一拥有者。关闭 client 不停止远端对象；各 worker 收到 Ctrl-C 后 Close 并等待所属实例完整退出。所有进程可通过 `-nats nats://SERVER:4222` 连接同一服务。
 
 CounterSpec 与 Counter 一起定义，通过 `go generate ./examples/counter` 生成绑定。client 角色仍链接本程序中的 Actor 定义。远端 Stop/Wait 见[生命周期](../../docs/lifecycle.zh.md)，跨进程组合调用见 [Button → Counter](../click/README.zh.md)。
+
+相同计数业务的 Python provider 与 HTTP consumer 接入方式见 [Remote Counter](../../remote/examples/counter/README.zh.md)。

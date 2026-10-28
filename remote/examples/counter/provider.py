@@ -7,28 +7,25 @@ import asyncio
 import json
 import os
 import signal
-import uuid
 
 from actorx_remote import JSONValue, Runtime
 
 
-class PingActor:
+class Counter:
     def __init__(self) -> None:
-        # Each factory call represents one complete remote Actor identity.
-        self.instance = uuid.uuid4().hex
-        self.calls = 0
-        print(json.dumps({"event": "created", "instance": self.instance}), flush=True)
+        self.count = 0
+        print(json.dumps({"event": "created"}), flush=True)
 
     async def handle(self, message: JSONValue) -> JSONValue:
-        if message != {"text": "ping"}:
-            raise ValueError("Expected Ping")
+        if not isinstance(message, dict) or set(message) != {"n"}:
+            raise ValueError("Expected Add with an integer n")
+        n = message["n"]
+        if type(n) is not int:
+            raise ValueError("Expected Add with an integer n")
 
-        self.calls += 1
-        print(
-            json.dumps({"event": "invoke", "instance": self.instance, "calls": self.calls}),
-            flush=True,
-        )
-        return {"text": "pong", "instance": self.instance, "calls": self.calls}
+        self.count += n
+        print(json.dumps({"event": "invoke", "count": self.count}), flush=True)
+        return self.count
 
 
 async def main(args: argparse.Namespace) -> None:
@@ -39,7 +36,7 @@ async def main(args: argparse.Namespace) -> None:
 
     async with Runtime(args.server, api_key=os.environ["REMOTE_API_KEY"]) as runtime:
         # Registration publishes a factory; the first Call creates an instance.
-        await runtime.register(args.type, PingActor, description="Python Ping/Pong")
+        await runtime.register(args.type, Counter, description="Python Counter")
         print(json.dumps({"event": "registered", "type": args.type}), flush=True)
 
         # Exit on either a local signal or an SDK connection failure. Awaiting
@@ -62,5 +59,5 @@ async def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", default="http://127.0.0.1:8080")
-    parser.add_argument("--type", default="demo.ping")
+    parser.add_argument("--type", default="demo.counter")
     asyncio.run(main(parser.parse_args()))

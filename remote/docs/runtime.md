@@ -2,7 +2,7 @@
 
 English | [中文](runtime.zh.md)
 
-Remote supplies cross-language access on top of actorxdist. The [protocol guide](protocol.md) defines the wire contract; the [Ping/Pong example](../examples/pingpong/README.md) gives runnable commands.
+Remote supplies cross-language access on top of actorxdist. The [protocol guide](protocol.md) defines the wire contract; the [Counter example](../examples/counter/README.md) gives runnable commands.
 
 ## Components and activation
 
@@ -93,7 +93,7 @@ Go code is part of the existing actorx-dist module. [Gateway](../gateway.go) coo
 
 Register may return a non-nil handle with an error after installation began. The caller must still join that handle with Close. A close timeout ends only that wait; cleanup responsibility persists, and waiting can be repeated.
 
-SSE requires ResponseController write deadlines and Flush. Middleware wrapping ResponseWriter should implement `Unwrap`. Set per-frame deadlines; a short server-wide WriteTimeout would terminate healthy registrations. See the [gateway entry point](../examples/pingpong/gateway/main.go) for assembly and independent cleanup contexts.
+SSE requires ResponseController write deadlines and Flush. Middleware wrapping ResponseWriter should implement `Unwrap`. Set per-frame deadlines; a short server-wide WriteTimeout would terminate healthy registrations. See the [gateway entry point](../examples/counter/gateway/main.go) for assembly and independent cleanup contexts.
 
 ## Disconnect and shutdown
 
@@ -113,7 +113,7 @@ The independent-process example demonstrates the local source chain, not release
 
 During early development, the unified gateway and Python SDK retain `actorx.remote/v1`. Use matching gateway and SDK implementations. The SDK adds `X-Actorx-Remote-Protocol: actorx.remote/v1` to every POST and validates the registration result. After authentication, HTTP rejects missing or mismatched versions with 400 before dispatch. Remove the old `stream=True` registration argument and all `capabilities` fields. Implement `handle`, `handle_stream`, or both, and use `register(type, factory)` for every Actor.
 
-The remote wire version and actorx-dist Type contract are separate. All registrations now have fixed Call, Stream and Started bindings. A former Call-only Type gains a binding and changes its fingerprint: on an existing Registry, choose a new Type such as `demo.ping.v2` for both provider and consumer. Restarting or Unregister does not erase a published contract. A former Stream-capable Type retains its fingerprint if DTOs and bindings are unchanged; renaming the Go proxy struct alone does not require a new Type. See the [contract reference](../../docs/contract.md).
+The remote wire version and actorx-dist Type contract are separate. All registrations now have fixed Call, Stream and Started bindings. A former Call-only Type gains a binding and changes its fingerprint: on an existing Registry, choose a new Type such as `demo.counter.v2` for both provider and consumer. Restarting or Unregister does not erase a published contract. A former Stream-capable Type retains its fingerprint if DTOs and bindings are unchanged; renaming the Go proxy struct alone does not require a new Type. See the [contract reference](../../docs/contract.md).
 
 Development examples may keep their business Type names on fresh, isolated NATS storage. Use a new development storage directory if an earlier run published a Call-only contract; do not clear a shared Registry to bypass a conflict. Upgrading the wire version alone does not resolve that conflict.
 

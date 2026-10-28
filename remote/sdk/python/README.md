@@ -14,7 +14,7 @@ python3 -m venv /tmp/actorx-remote-demo-venv
 /tmp/actorx-remote-demo-venv/bin/python -m unittest discover -s remote/sdk/python/tests
 ```
 
-A successful unittest run prints `OK`. These tests use controlled HTTP transports and SSE byte streams without listening ports or NATS. For complete independent gateway/provider/consumer commands and expected output, see [Ping/Pong](../../examples/pingpong/README.md) for Call and [Chat](../../examples/chat/README.md) for Stream.
+A successful unittest run prints `OK`. These tests use controlled HTTP transports and SSE byte streams without listening ports or NATS. For complete independent gateway/provider/consumer commands and expected output, see [Counter](../../examples/counter/README.md) for Call and [Chat](../../examples/chat/README.md) for Stream.
 
 ## One Actor, two operations
 
@@ -76,20 +76,20 @@ Each registration holds at most eight complete-identity instances and eight exec
 
 `RemoteError.code` is a string kind, `rpc_code` the integer RPC code, and `data` preserves valid extension data. Known kind/code mismatches are rejected; unknown codes use generic `RemoteError` with `code="unknown"`. Other exceptions include `AuthenticationError` (401), `SessionError` (403), `TransportError`, `ProtocolError`, `OutcomeUnknownError`, `ActivationUnknownError`, `DeadlineExceededError` and `UnsupportedOperationError`. Asyncio cancellation still raises `CancelledError`.
 
-A missing or non-callable requested method raises `UnsupportedOperationError(RemoteError)` with `rpc_code == 1013` and `code == "unsupported_operation"`. It carries the selected complete address; Stream must have zero items and `final_seq: 0`. This proves the requested business method was not entered, although object construction may have occurred. The SDK saves the generation, allowing the same Addr to use a supported operation. For example, with the Ping/Pong provider running:
+A missing or non-callable requested method raises `UnsupportedOperationError(RemoteError)` with `rpc_code == 1013` and `code == "unsupported_operation"`. It carries the selected complete address; Stream must have zero items and `final_seq: 0`. This proves the requested business method was not entered, although object construction may have occurred. The SDK saves the generation, allowing the same Addr to use a supported operation. For example, with the Counter provider running:
 
 ```python
 from actorx_remote import UnsupportedOperationError
 
-actor = runtime.addr("demo.ping", "session-42")
+actor = runtime.addr("demo.counter", "orders-42")
 try:
-    async with actor.stream({"text": "ping"}) as chunks:
+    async with actor.stream({"n": 5}) as chunks:
         async for chunk in chunks:
             print(chunk)
 except UnsupportedOperationError as exc:
     print(exc.rpc_code, actor.address["generation"])
 
-pong = await actor.call({"text": "ping"})  # Same Addr and generation
+count = await actor.call({"n": 5})  # Same Addr and generation
 ```
 
 Missing address evidence or a contradictory Stream terminal is treated as 1004. Error 1013 is distinct from factory/business failure 1000 and unknown JSON-RPC method -32601.
@@ -108,6 +108,6 @@ A pure Call consumer opens no SSE connection; each Stream consumer opens its own
 
 The gateway and SDK retain `actorx.remote/v1` during early development and must be used together. The SDK automatically sends the version header and validates registration results; authors do not configure protocol or capability switches. Remove `stream=True` and `capabilities` from earlier development code; the required version header remains v1. A former Call-only Type needs a new Type because Stream adds a binding; a former Stream-capable Type retains its contract when DTOs/bindings are unchanged. See [protocol and Type migration](../../docs/runtime.md#protocol-and-type-migration) for details and development storage handling.
 
-- [Ping/Pong](../../examples/pingpong/README.md) and [Chat](../../examples/chat/README.md): independent-process examples.
+- [Counter](../../examples/counter/README.md) and [Chat](../../examples/chat/README.md): independent-process examples.
 - [Runtime and lifecycle](../../docs/runtime.md): addressing, concurrency and cleanup semantics.
 - [Remote protocol](../../docs/protocol.md): Call/Stream exchanges, wire limits, the two credit segments and windows.

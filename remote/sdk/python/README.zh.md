@@ -14,7 +14,7 @@ python3 -m venv /tmp/actorx-remote-demo-venv
 /tmp/actorx-remote-demo-venv/bin/python -m unittest discover -s remote/sdk/python/tests
 ```
 
-通过时 unittest 输出 `OK`。这些测试使用可控的 HTTP transport 和 SSE 字节流，不依赖监听端口或 NATS。独立 gateway/provider/consumer 的完整运行命令及预期输出见 [Ping/Pong](../../examples/pingpong/README.zh.md)（Call）与 [Chat](../../examples/chat/README.zh.md)（Stream）。
+通过时 unittest 输出 `OK`。这些测试使用可控的 HTTP transport 和 SSE 字节流，不依赖监听端口或 NATS。独立 gateway/provider/consumer 的完整运行命令及预期输出见 [Counter](../../examples/counter/README.zh.md)（Call）与 [Chat](../../examples/chat/README.zh.md)（Stream）。
 
 ## 一个 Actor，两种操作
 
@@ -76,20 +76,20 @@ async with actor.stream({"text": "hello"}, timeout=30) as chunks:
 
 `RemoteError.code` 为字符串 kind，`rpc_code` 为整数 RPC code，`data` 保留合法扩展数据。已知 kind/code 不一致会被拒绝，未知 code 使用通用 `RemoteError` 和 `code="unknown"`。另提供 `AuthenticationError`（401）、`SessionError`（403）、`TransportError`、`ProtocolError`、`OutcomeUnknownError`、`ActivationUnknownError`、`DeadlineExceededError` 和 `UnsupportedOperationError`。`asyncio` 取消仍抛 `CancelledError`。
 
-请求的方法缺失或不可调用时抛 `UnsupportedOperationError(RemoteError)`，其 `rpc_code == 1013`、`code == "unsupported_operation"`。错误带选定的完整地址；Stream 必须为零项且 `final_seq: 0`。这证明该业务方法没有进入，但此前仍可能构造对象。SDK 保存 generation，原 Addr 可继续执行已支持的操作。例如在 Ping/Pong provider 运行时：
+请求的方法缺失或不可调用时抛 `UnsupportedOperationError(RemoteError)`，其 `rpc_code == 1013`、`code == "unsupported_operation"`。错误带选定的完整地址；Stream 必须为零项且 `final_seq: 0`。这证明该业务方法没有进入，但此前仍可能构造对象。SDK 保存 generation，原 Addr 可继续执行已支持的操作。例如在 Counter provider 运行时：
 
 ```python
 from actorx_remote import UnsupportedOperationError
 
-actor = runtime.addr("demo.ping", "session-42")
+actor = runtime.addr("demo.counter", "orders-42")
 try:
-    async with actor.stream({"text": "ping"}) as chunks:
+    async with actor.stream({"n": 5}) as chunks:
         async for chunk in chunks:
             print(chunk)
 except UnsupportedOperationError as exc:
     print(exc.rpc_code, actor.address["generation"])
 
-pong = await actor.call({"text": "ping"})  # 原 Addr、同一代实例
+count = await actor.call({"n": 5})  # 原 Addr、同一代实例
 ```
 
 缺少地址或矛盾的 Stream 终态不能作为可信 1013，按 1004 处理。1013 与工厂/业务失败 1000、未知 JSON-RPC 方法 -32601 分别处理。
@@ -108,6 +108,6 @@ pong = await actor.call({"text": "ping"})  # 原 Addr、同一代实例
 
 当前仍处于早期开发，gateway 与 SDK 保留 `actorx.remote/v1`，须配套使用。SDK 自动发送版本 Header 并校验注册结果，作者无需配置协议或能力开关。早期代码更新时删除 `stream=True` 和 `capabilities`；版本 Header 仍须显式携带 v1。旧 Call-only Type 因新增 Stream 绑定须选择新 Type，旧 Stream-capable Type 在 DTO/绑定不变时保持契约。详细条件及开发存储处理见[协议与 Type 迁移](../../docs/runtime.zh.md#协议与-type-迁移)。
 
-- [Ping/Pong](../../examples/pingpong/README.zh.md)与 [Chat](../../examples/chat/README.zh.md)：独立进程示例。
+- [Counter](../../examples/counter/README.zh.md)与 [Chat](../../examples/chat/README.zh.md)：独立进程示例。
 - [运行模型与生命周期](../../docs/runtime.zh.md)：地址、并发与清理语义。
 - [Remote 协议](../../docs/protocol.zh.md)：Call/Stream 消息过程、wire 限制、两段 credit 和窗口。
