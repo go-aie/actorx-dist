@@ -33,7 +33,12 @@ func await[T any](t *testing.T, ch <-chan T) T {
 }
 
 func testAddress(id string) protocol.Address {
-	return protocol.Address{Version: 1, Type: "demo.ping", ID: id, Generation: "AAAAAAAAAAAAAAAAAAAAAA"}
+	return protocol.Address{
+		Version:    1,
+		Type:       "demo.ping",
+		ID:         id,
+		Generation: "AAAAAAAAAAAAAAAAAAAAAA",
+	}
 }
 
 func input(id string) protocol.Invoke {
@@ -146,7 +151,12 @@ func TestSessionCorrelationAndTerminalPublication(t *testing.T) {
 	}
 	for _, other := range []protocol.Address{
 		testAddress("other"),
-		{Version: 1, Type: "demo.ping", ID: "one", Generation: "AQAAAAAAAAAAAAAAAAAAAA"},
+		{
+			Version:    1,
+			Type:       "demo.ping",
+			ID:         "one",
+			Generation: "AQAAAAAAAAAAAAAAAAAAAA",
+		},
 	} {
 		if r.session.evidence("call-1", other).terminal {
 			t.Fatal("execution evidence crossed ID/generation")
@@ -194,8 +204,18 @@ func TestCreateFailureSurvivesPendingAndIsScoped(t *testing.T) {
 	}
 	for _, other := range []protocol.Address{
 		testAddress("other"),
-		{Version: 1, Type: a.Type, ID: a.ID, Generation: "AQAAAAAAAAAAAAAAAAAAAA"},
-		{Version: 1, Type: "other.type", ID: a.ID, Generation: a.Generation},
+		{
+			Version:    1,
+			Type:       a.Type,
+			ID:         a.ID,
+			Generation: "AQAAAAAAAAAAAAAAAAAAAA",
+		},
+		{
+			Version:    1,
+			Type:       "other.type",
+			ID:         a.ID,
+			Generation: a.Generation,
+		},
 	} {
 		if r.session.evidence("outer-call", other).terminal {
 			t.Fatal("identity evidence leaked")
@@ -264,7 +284,7 @@ func TestSessionCapacityCloseAndQueue(t *testing.T) {
 	}
 
 	// Receive each dispatch, then put it back: all eight pending are registered
-	// before proceeding and the outbound queue is deterministically full.
+	// before proceeding; the pending invocation capacity is now full.
 	events := make([]protocol.Message, 0, protocol.Capacity)
 	for i := 0; i < protocol.Capacity; i++ {
 		events = append(events, await(t, r.Events()))
@@ -303,19 +323,24 @@ func TestProxyBindingsAndDeferredWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(descriptors) != 1 || len(zero.Bindings()) != 2 {
+	if len(descriptors) != 2 || len(zero.Bindings()) != 3 {
 		t.Fatal(descriptors)
 	}
-	found := false
+	found, foundStream := false, false
 	for _, d := range descriptors {
 		if d.MessageType() == reflect.TypeFor[protocol.Invoke]() &&
 			d.ResultType() == reflect.TypeFor[protocol.Result]() &&
 			d.Validate(actorx.CallKind) == nil {
 			found = true
 		}
+		if d.MessageType() == reflect.TypeFor[protocol.InvokeStream]() &&
+			d.ResultType() == reflect.TypeFor[protocol.Chunk]() &&
+			d.Validate(actorx.StreamKind) == nil {
+			foundStream = true
+		}
 	}
-	if !found {
-		t.Fatal("Invoke DTO binding missing")
+	if !found || !foundStream {
+		t.Fatal("Call/Stream DTO binding missing")
 	}
 
 	// This tests core deferred work only; Started/Self/activation are covered by
@@ -375,7 +400,11 @@ func TestMalformedProviderResponseDoesNotConsumePending(t *testing.T) {
 	event := await(t, r.Events())
 	malformed := []protocol.Message{
 		protocol.Success(event.ID, protocol.CreateResult{Address: testAddress("one")}), // missing value
-		protocol.ErrorResponse(event.ID, &protocol.Error{Code: protocol.Full, Message: "x", Data: json.RawMessage(`{"kind":"remote_error"}`)}),
+		protocol.ErrorResponse(event.ID, &protocol.Error{
+			Code:    protocol.Full,
+			Message: "x",
+			Data:    json.RawMessage(`{"kind":"remote_error"}`),
+		}),
 	}
 	for _, response := range malformed {
 		if err := g.Accept(testCtx(t), r.Info().SessionToken, response); err != ErrResponse {
@@ -397,7 +426,7 @@ func TestQueueRejectionAndOuterSettlement(t *testing.T) {
 	s := newSession()
 	defer s.close()
 	filler, _ := protocol.NewRequest(protocol.Create, "filler", protocol.CreateParams{Address: testAddress("filler"), DeadlineUnixMS: 1})
-	for i := 0; i < protocol.Capacity; i++ {
+	for i := 0; i < cap(s.events); i++ {
 		s.events <- filler
 	}
 	s.track("rejected")
@@ -407,7 +436,7 @@ func TestQueueRejectionAndOuterSettlement(t *testing.T) {
 	if s.evidence("rejected", testAddress("queue")).sent {
 		t.Fatal("queue refusal recorded dispatch")
 	}
-	for i := 0; i < protocol.Capacity; i++ {
+	for i := 0; i < cap(s.events); i++ {
 		<-s.events
 	}
 

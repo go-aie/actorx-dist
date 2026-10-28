@@ -132,6 +132,6 @@ Keep the NATS service running or restart it before continuing. Each example's RE
 | [Call semantics](docs/runtime.md) | Send/Call/Stream, deadlines, errors and capacity. |
 | [Lifecycle](docs/lifecycle.md) | Stop/Wait, object lifetime and cleanup responsibility. |
 | [Deployment](docs/deployment.md) | Configuration, permissions, contract upgrades and explicit recovery. |
-| [Cross-language access](remote/README.md) | HTTP/SSE Call, Python providers and consumers, and the remote protocol. |
+| [Cross-language access](remote/README.md) | HTTP/SSE Call/Stream, Python providers and consumers, and the remote protocol. |
 
 Implementation details live in [architecture and core integration](docs/architecture.md), [wire contract and limits](docs/contract.md), and the [Registry protocol](docs/registry.md). Released-version consumption, physical cross-host networking and replication remain unverified.

@@ -1,4 +1,4 @@
-// Package remote coordinates cross-language providers with an existing dist
+// Package remote coordinates cross-language providers with an existing actorx-dist
 // Runtime. It owns registrations and pending work, never the borrowed Runtime.
 package remote
 
@@ -24,20 +24,22 @@ type registrationOwner interface{ Unregister(context.Context) error }
 // cannot establish activation ownership, real Self or network routing.
 type backend struct {
 	register func(context.Context, string, *session) (registrationOwner, error)
+	stream   func(context.Context, protocol.Address, protocol.InvokeStream, func(protocol.Address, protocol.Chunk) error) (protocol.Address, error)
 	call     func(context.Context, protocol.Address, protocol.Invoke) (protocol.Address, protocol.Result, error)
 }
 
 // Gateway owns provider registrations and admission to their shared Runtime.
-// mu protects registration visibility, the active Call count and shutdown.
+// mu protects registration visibility, the active Call/Stream count and shutdown.
 type Gateway struct {
-	mu            sync.Mutex
-	backend       backend
-	registrations map[string]*Registration
-	active        int
-	closed        bool
-	once          sync.Once
-	done          chan struct{}
-	err           error
+	mu              sync.Mutex
+	backend         backend
+	registrations   map[string]*Registration
+	active          int
+	consumerStreams map[string]*ConsumerStream
+	closed          bool
+	once            sync.Once
+	done            chan struct{}
+	err             error
 }
 
 // NewGateway borrows rt. Its creator closes rt after Gateway and transport
@@ -57,6 +59,23 @@ func NewGateway(rt *actorxdist.Runtime) (*Gateway, error) {
 			}
 			return r, err
 		},
+		stream: func(ctx context.Context, address protocol.Address, input protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
+			raw, _ := json.Marshal(address)
+			a, err := rt.DecodeAddr(raw)
+			if err != nil {
+				return address, err
+			}
+			err = a.Stream[protocol.Chunk](ctx, input, func(c protocol.Chunk) error {
+				raw, _ := a.MarshalJSON()
+				var selected protocol.Address
+				_ = json.Unmarshal(raw, &selected)
+				return yield(selected, c)
+			})
+			if raw, e := a.MarshalJSON(); e == nil {
+				_ = json.Unmarshal(raw, &address)
+			}
+			return address, err
+		},
 		call: func(ctx context.Context, address protocol.Address, input protocol.Invoke) (protocol.Address, protocol.Result, error) {
 			raw, _ := json.Marshal(address)
 			addr, err := rt.DecodeAddr(raw)
@@ -74,11 +93,16 @@ func NewGateway(rt *actorxdist.Runtime) (*Gateway, error) {
 }
 
 func newGateway(b backend) *Gateway {
-	return &Gateway{backend: b, registrations: map[string]*Registration{}, done: make(chan struct{})}
+	return &Gateway{
+		backend:         b,
+		registrations:   map[string]*Registration{},
+		consumerStreams: map[string]*ConsumerStream{},
+		done:            make(chan struct{}),
+	}
 }
 
 // Registration must not be copied. Events has one reader and closes when session
-// admission ends. Done closes after Unregister and all outer Calls finish.
+// admission ends. Done closes after Unregister and all outer Call/Stream operations finish.
 type Registration struct {
 	gateway     *Gateway
 	session     *session
@@ -96,12 +120,14 @@ type Registration struct {
 }
 
 // Info returns this registration's immutable protocol data.
-func (r *Registration) Info() protocol.RegistrationInfo { return r.info }
+func (r *Registration) Info() protocol.RegistrationInfo {
+	return r.info
+}
 
 // Events has one transport reader; closing the session closes the channel.
 func (r *Registration) Events() <-chan protocol.Message { return r.session.events }
 
-// Done closes after Unregister and all admitted Calls have finished cleanup.
+// Done closes after Unregister and all admitted Call/Stream operations finish cleanup.
 func (r *Registration) Done() <-chan struct{} { return r.done }
 
 // Register bounds installation with ctx; ctx does not own the provider lifetime.
@@ -121,9 +147,13 @@ func (g *Gateway) Register(ctx context.Context, request protocol.RegisterParams)
 		return nil, err
 	}
 	r := &Registration{
-		gateway:     g,
-		session:     newSession(),
-		info:        protocol.RegistrationInfo{Protocol: protocol.Version, Type: request.Type, SessionToken: token},
+		gateway: g,
+		session: newSession(),
+		info: protocol.RegistrationInfo{
+			Protocol:     protocol.Version,
+			Type:         request.Type,
+			SessionToken: token,
+		},
 		description: request.Description,
 		installed:   make(chan struct{}),
 		done:        make(chan struct{}),
@@ -212,6 +242,9 @@ func (g *Gateway) Close(ctx context.Context) error {
 	g.once.Do(func() {
 		g.mu.Lock()
 		g.closed = true
+		for _, s := range g.consumerStreams {
+			s.cancel()
+		}
 		regs := make([]*Registration, 0, len(g.registrations))
 		for _, r := range g.registrations {
 			regs = append(regs, r)
@@ -254,7 +287,11 @@ func (g *Gateway) Services() []protocol.Service {
 	out := make([]protocol.Service, 0, len(g.registrations))
 	for _, r := range g.registrations {
 		if r.ready && !g.closed {
-			out = append(out, protocol.Service{Type: r.info.Type, Description: r.description, Protocol: protocol.Version})
+			out = append(out, protocol.Service{
+				Type:        r.info.Type,
+				Description: r.description,
+				Protocol:    protocol.Version,
+			})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
@@ -322,7 +359,7 @@ func (g *Gateway) Call(ctx context.Context, request protocol.CallParams) (protoc
 	address, result, err := g.backend.call(ctx, request.Address, input)
 	response.Address = address
 
-	// Seal the evidence window before interpreting dist's possibly later error.
+	// Seal the evidence window before interpreting actorx-dist's possibly later error.
 	evidence := r.session.settle(id, address)
 	if evidence.terminal {
 		if evidence.err != nil {

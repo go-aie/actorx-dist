@@ -8,15 +8,16 @@ import (
 	"testing"
 
 	"github.com/go-aie/actorx-dist/remote"
+	"github.com/go-aie/actorx-dist/remote/protocol"
 )
 
 const testKey = "test-credential-for-http-adapter-tests"
 
-// unreadBody proves rejected credentials are checked before any RPC body read.
+// unreadBody proves rejected headers are checked before any RPC body read.
 type unreadBody struct{ t *testing.T }
 
 func (b unreadBody) Read([]byte) (int, error) {
-	b.t.Fatal("unauthenticated body read")
+	b.t.Fatal("rejected request body read")
 	return 0, io.EOF
 }
 
@@ -74,6 +75,7 @@ func TestAuthentication(t *testing.T) {
 		r := httptest.NewRequest(http.MethodPost, "/runtime/rpc", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"runtime/services"}`))
 		r.Header.Set("Authorization", auth)
 		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set(ProtocolHeader, protocol.Version)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != 200 {

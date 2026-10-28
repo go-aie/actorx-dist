@@ -7,6 +7,7 @@ import "github.com/go-aie/actorx"
 func (a *proxyActor) Bindings() []actorx.Binding {
 	return []actorx.Binding{
 		actorx.HandleDeferred(a.Invoke),
+		actorx.HandleStream(a.InvokeStream),
 		actorx.HandleMessage(a.Started),
 	}
 }

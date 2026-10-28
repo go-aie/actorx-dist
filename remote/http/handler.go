@@ -31,7 +31,7 @@ type handler struct {
 }
 
 // NewHandler serves POST /runtime/rpc. Construction performs no I/O and takes
-// ownership of neither gateway nor its borrowed dist Runtime.
+// ownership of neither gateway nor its borrowed actorx-dist Runtime.
 func NewHandler(gateway *remote.Gateway, options Options) (http.Handler, error) {
 	if gateway == nil || !bearerToken(options.APIKey) {
 		return nil, fmt.Errorf("remote/http: gateway and valid API key required")
@@ -58,7 +58,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	version := r.Header.Values(ProtocolHeader)
 	sessions := r.Header.Values(SessionHeader)
-	if len(version) > 1 || len(version) == 1 && version[0] != protocol.Version ||
+	if len(version) != 1 || version[0] != protocol.Version ||
 		len(sessions) > 1 || len(sessions) == 1 && (sessions[0] == "" || strings.ContainsAny(sessions[0], ", \t")) {
 		http.Error(w, "Invalid protocol or session header", http.StatusBadRequest)
 		return
@@ -93,6 +93,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Cannot read RPC body", status)
 		return
 	}
+	original := raw
 	raw = bytes.TrimSpace(raw)
 	m, rpcErr := protocol.ParseMessage(raw)
 	ctx, cancel := context.WithDeadline(r.Context(), started.Add(budget))
@@ -100,11 +101,19 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Provider response POSTs are correlated independently from RPC requests.
 	if len(sessions) != 0 {
-		if rpcErr != nil || m.IsRequest() {
+		if rpcErr != nil || m.IsRequest() && (!m.IsNotification() || m.Method != protocol.ChunkMethod) {
 			http.Error(w, "Expected one provider response", http.StatusBadRequest)
 			return
 		}
-		h.accept(w, ctx, sessions[0], m)
+		h.accept(w, ctx, sessions[0], original)
+		return
+	}
+	if rpcErr == nil && m.IsNotification() && (m.Method == protocol.Credit || m.Method == protocol.Cancel) {
+		h.control(w, ctx, m)
+		return
+	}
+	if rpcErr == nil && m.Method == protocol.ChunkMethod {
+		http.Error(w, "Provider session required", http.StatusForbidden)
 		return
 	}
 	if rpcErr == nil && !m.IsRequest() {
@@ -131,6 +140,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rpcErr == nil && m.Method == protocol.Register && !m.IsNotification() && sseOK {
 		h.register(w, r, ctx, m)
+		return
+	}
+	if rpcErr == nil && m.Method == protocol.Stream && !m.IsNotification() && sseOK {
+		streamCtx, stop := context.WithDeadline(r.Context(), started.Add(60*time.Second))
+		defer stop()
+		h.stream(w, streamCtx, m)
 		return
 	}
 	if !jsonOK && !onlyNotifications {
@@ -163,6 +178,8 @@ func (h *handler) dispatch(ctx context.Context, m protocol.Message, _ bool) (any
 	switch m.Method {
 	case protocol.Services:
 		return protocol.ServicesResult{Services: h.gateway.Services()}, nil
+	case protocol.Credit, protocol.Cancel, protocol.ChunkMethod:
+		return nil, protocol.NewError(protocol.TransportMode, "Control requires a single notification POST", nil)
 	case protocol.Call:
 		result, callErr := h.gateway.Call(ctx, params.(protocol.CallParams))
 		return result, rpcError(callErr)
@@ -192,8 +209,8 @@ func writeRPC(w http.ResponseWriter, m protocol.Message) {
 	_, _ = w.Write(raw)
 }
 
-func (h *handler) accept(w http.ResponseWriter, ctx context.Context, token string, m protocol.Message) {
-	err := h.gateway.Accept(ctx, token, m)
+func (h *handler) accept(w http.ResponseWriter, ctx context.Context, token string, raw []byte) {
+	err := h.gateway.AcceptEncoded(ctx, token, raw)
 	if err == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return

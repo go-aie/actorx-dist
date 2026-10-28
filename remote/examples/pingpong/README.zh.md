@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-独立 Python provider 注册 `demo.ping`，consumer 通过 HTTP 调用，Go gateway 借助内部 dist/NATS 按需创建代理。provider 和 consumer 只需要 gateway URL 与同一个 API Key，不监听端口、不安装 NATS 客户端。
+独立 Python provider 注册 `demo.ping`，consumer 通过 HTTP 调用，Go gateway 借助内部 actorx-dist/NATS 按需创建代理。provider 和 consumer 只需要 gateway URL 与同一个 API Key，不监听端口、不安装 NATS 客户端。
 
 ## 运行
 
@@ -63,6 +63,10 @@ consumer 完成后自行退出。按 provider → gateway → NATS 的顺序 Ctr
 [consumer.py](consumer.py) 使用 `Runtime.addr(...).call(...)` 连续调用同一个 Addr，再调用另一个 ID；输出中的实例标识和计数展示对象的复用与独立状态。[gateway/main.go](gateway/main.go) 从环境读取 Key，装配共享 actorxdist.Runtime 与 HTTP handler，并按 Gateway → HTTP Server → Runtime 顺序关闭。
 
 这是本机源码示例，当前使用 Call；provider 断线后需要重新启动注册。
+
+PingActor 只实现 `handle`，与实现 `handle_stream` 的 [Chat](../chat/README.zh.md) 使用相同的 `register(type, factory)`。一个 Actor 也可同时实现两者，通过同一个 Addr 共享状态。请求缺失操作会抛出带选定地址的 `UnsupportedOperationError`（1013），该 Addr 仍可执行已支持的操作。两种方法及错误处理见 [SDK 指南](../../sdk/python/README.zh.md)。
+
+gateway 和 SDK 配套使用 `actorx.remote/v1`。若此 Type 之前已注册过仅 Call 绑定，为 provider 和 consumer 同时选择新 Type，例如 `demo.ping.v2`；详见[协议与 Type 迁移](../../docs/runtime.zh.md#协议与-type-迁移)。
 
 ## 链接
 

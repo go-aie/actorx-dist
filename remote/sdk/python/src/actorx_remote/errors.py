@@ -27,6 +27,10 @@ class DeadlineExceededError(RemoteError):
     pass
 
 
+class UnsupportedOperationError(RemoteError):
+    pass
+
+
 class AddressUncertainError(RemoteError):
     def __init__(self) -> None:
         super().__init__("address_uncertain", None, "Address selection is uncertain")

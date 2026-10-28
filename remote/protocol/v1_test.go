@@ -1,0 +1,116 @@
+package protocol
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+// Both Go and Python read these vectors so protocol revisions cannot silently
+// diverge in registration, error evidence or the unchanged actorx-dist DTO shapes.
+func TestV1WireVectors(t *testing.T) {
+	raw, err := os.ReadFile("testdata/v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	a := Address{
+		Version:    1,
+		Type:       "demo.ping",
+		ID:         "session-42",
+		Generation: "AAAAAAAAAAAAAAAAAAAAAA",
+	}
+	registration, err := NewRequest(Register, "p:register-1", RegisterParams{Type: a.Type, Description: "Ping/Pong provider"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]any{
+		"register": registration,
+		"registered": Success(json.RawMessage(`"p:register-1"`), RegistrationInfo{
+			Protocol: Version, Type: a.Type, SessionToken: "session-token",
+		}),
+		"services": Success(json.RawMessage(`"list-1"`), ServicesResult{Services: []Service{
+			{
+				Type:        a.Type,
+				Description: "Ping/Pong provider",
+				Protocol:    Version,
+			},
+		}}),
+		"call_unsupported":   ErrorResponse(json.RawMessage(`"c:1"`), NewError(UnsupportedOperation, Kind(UnsupportedOperation), &a)),
+		"stream_unsupported": ErrorResponse(json.RawMessage(`"s:1"`), StreamError(NewError(UnsupportedOperation, Kind(UnsupportedOperation), &a), 0)),
+		"call_failure":       NewResult(nil, &Failure{Code: UnsupportedOperation, Message: Kind(UnsupportedOperation)}),
+		"invoke": Invoke{
+			RequestID:   "remote-call-1",
+			MessageType: "json",
+			ContentType: "application/json",
+			Content:     `{"text":"ping"}`,
+		},
+		"invoke_stream": InvokeStream{
+			RequestID:   "remote-stream-1",
+			MessageType: "json",
+			ContentType: "application/json",
+			Content:     `{"text":"ping"}`,
+		},
+		"chunk": Chunk{
+			MessageType: "json",
+			ContentType: "application/json",
+			Content:     "null",
+		},
+	}
+	if len(values) != len(vectors) {
+		t.Fatal("uncovered wire vectors")
+	}
+	for name, value := range values {
+		t.Run(name, func(t *testing.T) {
+			got, err := json.Marshal(value)
+			var want bytes.Buffer
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Compact(&want, vectors[name]); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want.Bytes()) {
+				t.Fatalf("got %s, want %s", got, want.Bytes())
+			}
+		})
+	}
+}
+
+func TestV1ProviderFailureWhitelist(t *testing.T) {
+	allowed := map[int]bool{
+		1000: true,
+		1001: true,
+		1004: true,
+		1005: true,
+		1009: true,
+		1013: true,
+	}
+	for code := 999; code <= 1014; code++ {
+		e := NewError(code, "provider failure", nil)
+		failure, err := NormalizeProviderError(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := RemoteError
+		if allowed[code] {
+			want = code
+		}
+		if failure.Code != want {
+			t.Errorf("provider code %d normalized to %d, want %d", code, failure.Code, want)
+		}
+		if err := NewResult(nil, &Failure{Code: code, Message: "failure"}).Validate(); (err == nil) != allowed[code] {
+			t.Errorf("Failure code %d: %v", code, err)
+		}
+	}
+	if _, err := NormalizeProviderError(&Error{
+		Code: UnsupportedOperation,
+		Data: json.RawMessage(`{"kind":"remote_error"}`),
+	}); err == nil {
+		t.Fatal("accepted mismatched unsupported_operation kind")
+	}
+}

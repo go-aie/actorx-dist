@@ -1,4 +1,4 @@
-"""Minimal HTTP Call/provider SDK for actorx.remote/v1."""
+"""HTTP Call/Stream provider and consumer SDK for actorx.remote/v1."""
 
 from .addr import Addr
 from .errors import (
@@ -11,13 +11,17 @@ from .errors import (
     RemoteError,
     SessionError,
     TransportError,
+    UnsupportedOperationError,
 )
 from .runtime import Runtime
-from .types import Actor, ActorFactory, Address, JSONValue
+from .stream import Stream
+from .types import Actor, ActorFactory, StreamActor, Address, JSONValue
 
 __all__ = [
     "Runtime",
     "Addr",
+    "Stream",
+    "StreamActor",
     "Actor",
     "ActorFactory",
     "Address",
@@ -31,4 +35,5 @@ __all__ = [
     "ActivationUnknownError",
     "DeadlineExceededError",
     "AddressUncertainError",
+    "UnsupportedOperationError",
 ]

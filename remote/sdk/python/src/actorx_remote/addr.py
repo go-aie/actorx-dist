@@ -20,6 +20,7 @@ from .types import Address, JSONValue
 
 if TYPE_CHECKING:
     from .runtime import Runtime
+    from .stream import Stream
 
 CALL_SECONDS = 5.0
 
@@ -43,12 +44,21 @@ class Addr:
         value = p.decode(p.encode(message))
         return await self._runtime._call_task(self._call(value))
 
+    def stream(self, message: JSONValue, *, timeout: float = 5.0) -> Stream:
+        from .stream import Stream
+
+        self._runtime._check_open()
+        return Stream(self, message, timeout)
+
     def _save(self, value: object) -> None:
         a = p.address(value)
         if (
             a["type"] != self._address["type"]
             or a["id"] != self._address["id"]
-            or ("generation" in self._address and a["generation"] != self._address["generation"])
+            or (
+                "generation" in self._address
+                and a["generation"] != self._address["generation"]
+            )
         ):
             raise ProtocolError("Selected address mismatch")
         self._address = a
@@ -88,19 +98,31 @@ class Addr:
 
                     if "error" in reply:
                         e = p.remote_error(reply["error"])
+                        if e.rpc_code == 1013 and (
+                            not isinstance(e.data, dict) or "address" not in e.data
+                        ):
+                            raise ProtocolError("Missing unsupported operation address")
                         # Save selected identity even when the business call failed.
                         if isinstance(e.data, dict) and "address" in e.data:
                             self._save(e.data["address"])
-                        if "generation" not in self._address and e.rpc_code in (1000, -32603, 1012):
+                        if "generation" not in self._address and e.rpc_code in (
+                            1000,
+                            -32603,
+                            1012,
+                        ):
                             self._unknown()
                             raise OutcomeUnknownError(
-                                "outcome_unknown", 1004, "Call has no selected address evidence"
+                                "outcome_unknown",
+                                1004,
+                                "Call has no selected address evidence",
                             ) from e
                         if e.rpc_code in (1003, 1004):
                             self._unknown()
                         raise e
 
-                    result = p.fields(reply["result"], ("address", "value"), ("address", "value"))
+                    result = p.fields(
+                        reply["result"], ("address", "value"), ("address", "value")
+                    )
                     self._save(result["address"])
                     return cast(JSONValue, result["value"])
         except TimeoutError:

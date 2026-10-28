@@ -1,4 +1,4 @@
-"""Strict JSON-RPC envelopes and the frozen remote Call methods.
+"""Strict JSON-RPC envelopes and the remote v1 Call/Stream wire contract.
 
 Fractional JSON numbers use Decimal so numeric IDs and business values survive
 decoding/encoding without a float64 round trip. Ordinary Python floats are also
@@ -22,6 +22,7 @@ from .errors import (
     OutcomeUnknownError,
     ProtocolError,
     RemoteError,
+    UnsupportedOperationError,
 )
 from .types import RPCID, Address, JSONValue
 
@@ -33,7 +34,7 @@ MAX_BYTES = 8192
 CAPACITY = 8
 KINDS = dict(
     zip(
-        range(1000, 1013),
+        range(1000, 1014),
         (
             "remote_error",
             "full",
@@ -48,6 +49,7 @@ KINDS = dict(
             "owner_unavailable",
             "contract",
             "protocol",
+            "unsupported_operation",
         ),
     )
 )
@@ -92,7 +94,9 @@ def encode(value: object, *, _check_limit: bool = True) -> bytes:
         if isinstance(v, dict) and all(isinstance(k, str) for k in v):
             return (
                 "{"
-                + ",".join(emit(k, depth + 1) + ":" + emit(x, depth + 1) for k, x in v.items())
+                + ",".join(
+                    emit(k, depth + 1) + ":" + emit(x, depth + 1) for k, x in v.items()
+                )
                 + "}"
             )
         raise ValueError("Expected JSON data")
@@ -138,7 +142,8 @@ def envelope(raw: bytes) -> Message:
 
     # bool is an int subclass in Python, but it is never a JSON-RPC numeric ID.
     if "id" in m and (
-        isinstance(m["id"], bool) or not isinstance(m["id"], (str, int, Decimal, type(None)))
+        isinstance(m["id"], bool)
+        or not isinstance(m["id"], (str, int, Decimal, type(None)))
     ):
         raise bad
 
@@ -165,8 +170,14 @@ def envelope(raw: bytes) -> Message:
     return m
 
 
-def fields(value: object, allowed: Iterable[str], required: Iterable[str]) -> dict[str, Any]:
-    if not isinstance(value, dict) or value.keys() - set(allowed) or set(required) - value.keys():
+def fields(
+    value: object, allowed: Iterable[str], required: Iterable[str]
+) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or value.keys() - set(allowed)
+        or set(required) - value.keys()
+    ):
         raise ProtocolError("Invalid remote fields")
     return value
 
@@ -185,7 +196,9 @@ def identity(actor_type: object, actor_id: object) -> None:
 
 def address(value: object, *, fixed: bool = True) -> Address:
     try:
-        a = fields(value, ("version", "type", "id", "generation"), ("version", "type", "id"))
+        a = fields(
+            value, ("version", "type", "id", "generation"), ("version", "type", "id")
+        )
         if type(a["version"]) is not int or a["version"] != 1:
             raise ValueError()
         identity(a["type"], a["id"])
@@ -193,9 +206,12 @@ def address(value: object, *, fixed: bool = True) -> Address:
         if not isinstance(g, str) or (fixed and not g):
             raise ValueError()
         if g:
-            # Require the canonical 16-byte dist generation, without padding.
+            # Require the canonical 16-byte actorx-dist generation, without padding.
             raw = base64.b64decode(g + "==", altchars=b"-_", validate=True)
-            if len(raw) != 16 or base64.urlsafe_b64encode(raw).decode().rstrip("=") != g:
+            if (
+                len(raw) != 16
+                or base64.urlsafe_b64encode(raw).decode().rstrip("=") != g
+            ):
                 raise ValueError()
         return cast(Address, dict(a))
     except (ValueError, UnicodeError, TypeError) as exc:
@@ -210,7 +226,9 @@ def success(rpc_id: RPCID, result: object) -> Message:
     return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
 
 
-def failure(rpc_id: RPCID, code: int, *, actor_address: Address | None = None) -> Message:
+def failure(
+    rpc_id: RPCID, code: int, *, actor_address: Address | None = None
+) -> Message:
     # Fixed diagnostics prevent user exceptions from leaking secrets/tracebacks.
     e: Message = {"code": code, "message": KINDS[code]}
     if code > 0:
@@ -224,13 +242,19 @@ def remote_error(error: Mapping[str, Any]) -> RemoteError:
     code = error["code"]
     data = error.get("data")
     kind = KINDS.get(code, "unknown")
-    if isinstance(data, dict) and "kind" in data and code in KINDS and data["kind"] != kind:
+    if (
+        isinstance(data, dict)
+        and "kind" in data
+        and code in KINDS
+        and data["kind"] != kind
+    ):
         raise ProtocolError("RPC error kind/code mismatch")
 
     cls = {
         1003: ActivationUnknownError,
         1004: OutcomeUnknownError,
         1005: DeadlineExceededError,
+        1013: UnsupportedOperationError,
     }.get(code, RemoteError)
     # Do not echo an untrusted server diagnostic which may contain credentials.
     return cls(kind, code, kind, data)
@@ -241,3 +265,7 @@ def response(raw: bytes, rpc_id: RPCID) -> Message:
     if "method" in m or type(m["id"]) is not type(rpc_id) or m["id"] != rpc_id:
         raise ProtocolError("RPC response correlation mismatch")
     return m
+
+
+def notification(method: str, params: object) -> Message:
+    return {"jsonrpc": "2.0", "method": method, "params": params}

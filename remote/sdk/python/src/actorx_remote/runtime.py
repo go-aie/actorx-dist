@@ -6,22 +6,23 @@ import asyncio
 import inspect
 import time
 import uuid
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, cast
 
 from . import protocol as p
 from .addr import Addr
+from .provider_stream import ProviderStream
 from .errors import ProtocolError, RemoteError
 from .transports.http import HTTPTransport, check_status, frames, media_type, read_body
-from .types import RPCID, Actor, ActorFactory, Address, JSONValue
+from .types import RPCID, Actor, StreamActor, ActorFactory, Address, JSONValue
 
 REGISTER_SECONDS = 5.0
 
 
 @dataclass
 class _Instance:
-    actor: Actor | None = None
+    actor: Actor | StreamActor | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -36,9 +37,12 @@ class _Work:
     # and joins operation before releasing the registration's execution slot.
     operation: asyncio.Task[p.Message] | None = None
     job: asyncio.Task[None] | None = None
+    cancel_requested: bool = False
     cleaning: bool = False
+    stream: ProviderStream | None = None
 
     def cancel_operation(self) -> None:
+        self.cancel_requested = True
         if (
             self.operation is not None
             and not self.operation.done()
@@ -53,6 +57,7 @@ class Runtime:
             raise ValueError("Only HTTP transport is supported")
         self._http = HTTPTransport(url, api_key)
         self._registrations: dict[str, _Registration] = {}
+        self._streams: set[Any] = set()
         self._calls: set[asyncio.Task[JSONValue]] = set()
         self._closing = False
         self._closed = asyncio.Event()
@@ -83,7 +88,11 @@ class Runtime:
             self._calls.discard(task)
 
     async def register(
-        self, actor_type: str, factory: ActorFactory, *, description: str = ""
+        self,
+        actor_type: str,
+        factory: ActorFactory,
+        *,
+        description: str = "",
     ) -> None:
         self._check_open()
         p.identity(actor_type, "registration")
@@ -100,7 +109,9 @@ class Runtime:
         registration = _Registration(self, actor_type, factory, description)
         # Publish local factory and reader before the registration POST starts.
         self._registrations[actor_type] = registration
-        registration.reader = asyncio.create_task(registration.run(), name="actorx-remote-reader")
+        registration.reader = asyncio.create_task(
+            registration.run(), name="actorx-remote-reader"
+        )
 
         try:
             async with asyncio.timeout(REGISTER_SECONDS):
@@ -119,7 +130,9 @@ class Runtime:
     def _start_close(self) -> None:
         if self._close_task is None:
             self._closing = True
-            self._close_task = asyncio.create_task(self._shutdown(), name="actorx-remote-close")
+            self._close_task = asyncio.create_task(
+                self._shutdown(), name="actorx-remote-close"
+            )
 
     async def close(self) -> None:
         self._start_close()
@@ -137,6 +150,9 @@ class Runtime:
                 return_exceptions=True,
             )
 
+            await asyncio.gather(
+                *(s.aclose() for s in list(self._streams)), return_exceptions=True
+            )
             self._calls.clear()
             self._registrations.clear()
             await self._http.close()
@@ -151,12 +167,17 @@ class Runtime:
 
 class _Registration:
     def __init__(
-        self, runtime: Runtime, actor_type: str, factory: ActorFactory, description: str
+        self,
+        runtime: Runtime,
+        actor_type: str,
+        factory: ActorFactory,
+        description: str,
     ) -> None:
         self.runtime = runtime
         self.actor_type = actor_type
         self.factory: ActorFactory | None = factory
         self.description = description
+        self.streams: dict[object, ProviderStream] = {}
         self.ready: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self.reader: asyncio.Task[None] | None = None
         self.token: str | None = None
@@ -231,6 +252,15 @@ class _Registration:
         if "method" not in message:
             raise ProtocolError("Expected provider request")
 
+        if message["method"] in ("actor/credit", "actor/cancel"):
+            if "id" in message:
+                raise ProtocolError("Expected stream control notification")
+            params = message.get("params", {})
+            stream = self.streams.get(params.get("request_id"))
+            if stream is not None:
+                stream.control(message)
+            return
+
         rpc_id = message.get("id")
         if "id" in message:
             key = (type(rpc_id), rpc_id)
@@ -238,33 +268,54 @@ class _Registration:
                 raise ProtocolError("Reused provider request ID")
             self.seen.add(key)
 
-        if message["method"] not in ("actor/create", "actor/invoke"):
+        if message["method"] not in (
+            "actor/create",
+            "actor/invoke",
+            "actor/invoke_stream",
+        ):
             await self.reply(
-                message, p.failure(rpc_id, -32601), asyncio.get_running_loop().time() + 5
+                message,
+                p.failure(rpc_id, -32601),
+                asyncio.get_running_loop().time() + 5,
             )
             return
 
         try:
             required = ["address", "deadline_unix_ms"]
-            if message["method"] == "actor/invoke":
+            if message["method"] in ("actor/invoke", "actor/invoke_stream"):
                 required.append("input")
+            if message["method"] == "actor/invoke_stream":
+                if "id" not in message:
+                    raise ProtocolError("Stream request ID required")
+                required.extend(("stream_token", "window"))
             params = p.fields(message.get("params"), required, required)
             a = p.address(params["address"])
-            if a["type"] != self.actor_type or type(params["deadline_unix_ms"]) is not int:
+            if (
+                a["type"] != self.actor_type
+                or type(params["deadline_unix_ms"]) is not int
+            ):
                 raise ProtocolError("Invalid provider params")
             ms = params["deadline_unix_ms"]
             if not -(2**63) <= ms < 2**63:
                 raise ProtocolError("Invalid deadline")
         except ProtocolError:
             await self.reply(
-                message, p.failure(rpc_id, -32602), asyncio.get_running_loop().time() + 5
+                message,
+                p.failure(rpc_id, -32602),
+                asyncio.get_running_loop().time() + 5,
             )
             return
 
         # Convert the wire wall-clock deadline once; local waits use monotonic time.
         deadline = asyncio.get_running_loop().time() + (ms / 1000 - time.time())
         work = _Work(message, a, deadline)
-        if deadline <= asyncio.get_running_loop().time() or len(self.active) >= p.CAPACITY:
+        if message["method"] == "actor/invoke_stream":
+            work.stream = ProviderStream(self, work)
+            self.streams[rpc_id] = work.stream
+        if (
+            deadline <= asyncio.get_running_loop().time()
+            or len(self.active) >= p.CAPACITY
+        ):
             await self.settle(
                 work,
                 p.failure(
@@ -277,7 +328,9 @@ class _Registration:
 
         # Queued work also consumes a slot; only execute's cleanup releases it.
         self.active.add(work)
-        work.job = asyncio.create_task(self.execute(work), name="actorx-remote-execution")
+        work.job = asyncio.create_task(
+            self.execute(work), name="actorx-remote-execution"
+        )
 
     async def operate(self, work: _Work) -> p.Message:
         a = work.address
@@ -304,15 +357,42 @@ class _Registration:
                         if inspect.iscoroutine(actor):
                             actor.close()
                             raise TypeError("Expected synchronous factory")
-                        if not inspect.iscoroutinefunction(getattr(actor, "handle", None)):
-                            raise TypeError("Factory must provide async handle")
+                        if not any(
+                            callable(getattr(actor, name, None))
+                            for name in ("handle", "handle_stream")
+                        ):
+                            raise TypeError(
+                                "Factory must provide handle or handle_stream"
+                            )
                         instance.actor = actor
                     result: dict[str, object] = {"address": a}
                 else:
-                    value = await cast(Actor, instance.actor).handle(
-                        work.message["params"]["input"]
-                    )
-                    result = {"address": a, "value": value}
+                    # Method support belongs to this real instance. Check under
+                    # the same lock used by both operations, without executing it.
+                    name = "handle_stream" if work.stream is not None else "handle"
+                    method = getattr(instance.actor, name, None)
+                    if not callable(method):
+                        return p.failure(work.message.get("id"), 1013, actor_address=a)
+
+                    value = method(work.message["params"]["input"])
+                    if work.stream is not None:
+                        if not isinstance(value, AsyncIterator):
+                            if inspect.iscoroutine(value):
+                                value.close()
+                            raise TypeError(
+                                "handle_stream must return an async iterator"
+                            )
+
+                        try:
+                            async for item in value:
+                                await work.stream.send(item)
+                        finally:
+                            close = getattr(value, "aclose", None)
+                            if close is not None:
+                                await close()
+                        result = {"address": a, "final_seq": work.stream.seq}
+                    else:
+                        result = {"address": a, "value": await value}
 
                 reply = p.success(work.message.get("id"), result)
                 p.encode(reply)
@@ -321,10 +401,15 @@ class _Registration:
                 return p.failure(work.message.get("id"), 1000, actor_address=a)
 
     async def execute(self, work: _Work) -> None:
-        work.operation = asyncio.create_task(self.operate(work), name="actorx-remote-handler")
+        work.operation = asyncio.create_task(
+            self.operate(work), name="actorx-remote-handler"
+        )
+        if work.cancel_requested:
+            work.cancel_operation()
         try:
             done, _ = await asyncio.wait(
-                (work.operation,), timeout=max(0, work.deadline - asyncio.get_running_loop().time())
+                (work.operation,),
+                timeout=max(0, work.deadline - asyncio.get_running_loop().time()),
             )
             if done or work.operation.done():
                 await self.settle(work, work.operation.result())
@@ -370,11 +455,24 @@ class _Registration:
 
         # Publish before awaiting the POST so cancellation cannot send a second
         # terminal response. The original request deadline still bounds the POST.
+        if work.stream is not None:
+            work.stream.finished = True
+            if "error" in terminal:
+                terminal["error"].setdefault("data", {})["final_seq"] = work.stream.seq
+            if not work.stream.sizes:
+                work.stream.remove()
+
         work.terminal = terminal
         await self.reply(work.message, terminal, work.deadline)
 
-    async def reply(self, request: p.Message, terminal: p.Message, deadline: float) -> None:
-        if "id" not in request or self.closing or asyncio.get_running_loop().time() >= deadline:
+    async def reply(
+        self, request: p.Message, terminal: p.Message, deadline: float
+    ) -> None:
+        if (
+            "id" not in request
+            or self.closing
+            or asyncio.get_running_loop().time() >= deadline
+        ):
             return
         try:
             async with asyncio.timeout_at(deadline):
@@ -411,6 +509,8 @@ class _Registration:
         elif not self.ready.cancelled():
             self.ready.exception()  # retrieve errors even after a register timeout
 
+        for stream in list(self.streams.values()):
+            stream.remove()
         self.instances.clear()
         self.seen.clear()
         self.factory = None

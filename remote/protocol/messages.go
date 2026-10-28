@@ -1,5 +1,5 @@
-// Package protocol defines the actorx.remote/v1 Call contract. Business JSON is
-// preserved as raw text at the boundary and as strings in the stable dist DTOs.
+// Package protocol defines the actorx.remote/v1 Call and Stream contracts. Business JSON is
+// preserved as raw text at the boundary and as strings in the stable actorx-dist DTOs.
 package protocol
 
 import (
@@ -55,9 +55,10 @@ const (
 	OwnerUnavailable     = 1010
 	Contract             = 1011
 	ProtocolError        = 1012
+	UnsupportedOperation = 1013
 )
 
-// These field types and package identity form the dist Call schema. Changing
+// These field types and package identity form the actorx-dist Call schema. Changing
 // them or adding a binding requires a separately planned Type contract upgrade.
 type Invoke struct {
 	RequestID   string `json:"request_id"`
@@ -66,7 +67,7 @@ type Invoke struct {
 	Content     string `json:"content"`
 }
 
-// Result carries a business value or a normalized provider failure over dist.
+// Result carries a business value or a normalized provider failure over actorx-dist.
 // Provider failures use Failure with a nil Go error; framework errors stay separate.
 type Result struct {
 	MessageType string   `json:"message_type"`
@@ -108,19 +109,24 @@ func (v Result) Validate() error {
 }
 
 func NewResult(value json.RawMessage, failure *Failure) Result {
-	return Result{MessageType: "json", ContentType: "application/json", Content: string(value), Failure: failure}
+	return Result{
+		MessageType: "json",
+		ContentType: "application/json",
+		Content:     string(value),
+		Failure:     failure,
+	}
 }
 
 func failureCode(code int) bool {
 	switch code {
-	case RemoteError, Full, OutcomeUnknown, DeadlineExceeded, Canceled:
+	case RemoteError, Full, OutcomeUnknown, DeadlineExceeded, Canceled, UnsupportedOperation:
 		return true
 	}
 	return false
 }
 
-// Address preserves the dist identity. An omitted generation is selected on
-// first Call; a fixed address must never silently select another generation.
+// Address preserves the actorx-dist identity. An omitted generation is selected on
+// first Call or Stream; a fixed address must never silently select another generation.
 type Address struct {
 	Version    int    `json:"version"`
 	Type       string `json:"type"`
@@ -259,6 +265,8 @@ func Kind(code int) string {
 		return "contract"
 	case ProtocolError:
 		return "protocol"
+	case UnsupportedOperation:
+		return "unsupported_operation"
 	}
 	return ""
 }

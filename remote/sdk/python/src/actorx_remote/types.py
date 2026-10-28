@@ -1,11 +1,18 @@
 """Shared SDK types; Actor implementations need no framework base class."""
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from decimal import Decimal
 from typing import NotRequired, Protocol, TypeAlias, TypedDict
 
 JSONValue: TypeAlias = (
-    bool | int | float | Decimal | str | None | list["JSONValue"] | dict[str, "JSONValue"]
+    bool
+    | int
+    | float
+    | Decimal
+    | str
+    | None
+    | list["JSONValue"]
+    | dict[str, "JSONValue"]
 )
 RPCID: TypeAlias = str | int | Decimal | None
 
@@ -18,7 +25,11 @@ class Address(TypedDict):
 
 
 class Actor(Protocol):
-    async def handle(self, message: JSONValue) -> JSONValue: ...
+    def handle(self, message: JSONValue) -> Awaitable[JSONValue]: ...
 
 
-ActorFactory: TypeAlias = Callable[[], Actor]
+class StreamActor(Protocol):
+    def handle_stream(self, message: JSONValue) -> AsyncIterator[JSONValue]: ...
+
+
+ActorFactory: TypeAlias = Callable[[], Actor | StreamActor]

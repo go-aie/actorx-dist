@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from decimal import Decimal
+from pathlib import Path
 from typing import cast
 
 from actorx_remote import (
@@ -10,22 +11,92 @@ from actorx_remote import (
     JSONValue,
     OutcomeUnknownError,
     ProtocolError,
+    UnsupportedOperationError,
 )
 from actorx_remote import protocol as p
 from support import ADDRESS
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_v1_wire_vectors(self) -> None:
+        vectors = cast(
+            dict[str, p.Message],
+            p.decode(
+                (
+                    Path(__file__).resolve().parents[3] / "protocol/testdata/v1.json"
+                ).read_bytes()
+            ),
+        )
+        self.assertEqual(p.VERSION, "actorx.remote/v1")
+        self.assertEqual(
+            vectors["register"],
+            p.request(
+                "runtime/register",
+                "p:register-1",
+                {
+                    "type": "demo.ping",
+                    "description": "Ping/Pong provider",
+                },
+            ),
+        )
+        self.assertEqual(
+            vectors["registered"],
+            p.success(
+                "p:register-1",
+                {
+                    "protocol": p.VERSION,
+                    "type": "demo.ping",
+                    "session_token": "session-token",
+                },
+            ),
+        )
+        self.assertEqual(
+            vectors["services"],
+            p.success(
+                "list-1",
+                {
+                    "services": [
+                        {
+                            "type": "demo.ping",
+                            "description": "Ping/Pong provider",
+                            "protocol": p.VERSION,
+                        }
+                    ]
+                },
+            ),
+        )
+        call = p.failure("c:1", 1013, actor_address=ADDRESS)
+        self.assertEqual(vectors["call_unsupported"], call)
+        stream = p.failure("s:1", 1013, actor_address=ADDRESS)
+        stream["error"]["data"]["final_seq"] = 0
+        self.assertEqual(vectors["stream_unsupported"], stream)
+        for name in ("call_unsupported", "stream_unsupported"):
+            reply = p.response(p.encode(vectors[name]), vectors[name]["id"])
+            error = p.remote_error(reply["error"])
+            self.assertIsInstance(error, UnsupportedOperationError)
+            self.assertEqual(error.code, "unsupported_operation")
+            self.assertEqual(error.data, reply["error"]["data"])
+            self.assertEqual(p.address(reply["error"]["data"]["address"]), ADDRESS)
+            if name == "stream_unsupported":
+                self.assertEqual(reply["error"]["data"]["final_seq"], 0)
+        for name, value in vectors.items():
+            with self.subTest(name=name):
+                self.assertEqual(p.decode(p.encode(value)), value)
+
     def test_p0_numeric_ids_and_null_vectors(self) -> None:
         for text in ('"c:1"', "900719925474099312345", "1.234567890123456789", "null"):
             with self.subTest(text=text):
-                raw = ('{"jsonrpc":"2.0","id":' + text + ',"method":"runtime/services"}').encode()
+                raw = (
+                    '{"jsonrpc":"2.0","id":' + text + ',"method":"runtime/services"}'
+                ).encode()
                 message = p.envelope(raw)
                 encoded = p.encode(p.success(message["id"], None))
                 self.assertIn(('"id":' + text).encode(), encoded)
                 self.assertIsNone(p.envelope(encoded)["result"])
 
-        self.assertNotIn("id", p.envelope(b'{"jsonrpc":"2.0","method":"unknown","extension":true}'))
+        self.assertNotIn(
+            "id", p.envelope(b'{"jsonrpc":"2.0","method":"unknown","extension":true}')
+        )
 
     def test_p0_method_vectors(self) -> None:
         vectors = [
@@ -43,7 +114,11 @@ class ProtocolTests(unittest.TestCase):
                 p.request(
                     "actor/invoke",
                     "g:invoke-1",
-                    {"address": ADDRESS, "input": None, "deadline_unix_ms": 1890000000000},
+                    {
+                        "address": ADDRESS,
+                        "input": None,
+                        "deadline_unix_ms": 1890000000000,
+                    },
                 )
             ),
         ]
@@ -89,7 +164,8 @@ class ProtocolTests(unittest.TestCase):
     def test_address_validation_matches_dist(self) -> None:
         self.assertEqual(p.address(ADDRESS), ADDRESS)
         self.assertNotIn(
-            "generation", p.address({"version": 1, "type": "demo.ping", "id": "x"}, fixed=False)
+            "generation",
+            p.address({"version": 1, "type": "demo.ping", "id": "x"}, fixed=False),
         )
         for update in (
             {"version": True},
@@ -107,14 +183,19 @@ class ProtocolTests(unittest.TestCase):
 
     def test_error_codes_data_and_correlation(self) -> None:
         for code, kind in p.KINDS.items():
-            error = p.remote_error({"code": code, "message": "safe", "data": {"kind": kind}})
+            error = p.remote_error(
+                {"code": code, "message": "safe", "data": {"kind": kind}}
+            )
             self.assertEqual((error.rpc_code, error.code), (code, kind))
             with self.assertRaises(ProtocolError):
-                p.remote_error({"code": code, "message": "bad", "data": {"kind": "wrong"}})
+                p.remote_error(
+                    {"code": code, "message": "bad", "data": {"kind": "wrong"}}
+                )
         for code, cls in (
             (1003, ActivationUnknownError),
             (1004, OutcomeUnknownError),
             (1005, DeadlineExceededError),
+            (1013, UnsupportedOperationError),
         ):
             self.assertIsInstance(p.remote_error({"code": code, "message": "x"}), cls)
 
@@ -123,15 +204,24 @@ class ProtocolTests(unittest.TestCase):
         data: object
         for data in (None, [], "extension", {"extension": True}):
             self.assertEqual(
-                p.remote_error({"code": -32602, "message": "x", "data": data}).rpc_code, -32602
+                p.remote_error({"code": -32602, "message": "x", "data": data}).rpc_code,
+                -32602,
             )
-        self.assertEqual(p.remote_error({"code": 123456, "message": "x"}).rpc_code, 123456)
+        self.assertEqual(
+            p.remote_error({"code": 123456, "message": "x"}).rpc_code, 123456
+        )
 
         with self.assertRaises(ProtocolError):
             p.response(p.encode(p.success("other", None)), "expected")
 
     def test_limits_check_encoded_whole_message(self) -> None:
-        for value in ({"x": "<" * 3000}, {"x": "x" * 8192}, float("nan"), object(), {1: "x"}):
+        for value in (
+            {"x": "<" * 3000},
+            {"x": "x" * 8192},
+            float("nan"),
+            object(),
+            {1: "x"},
+        ):
             with self.subTest(value=type(value)), self.assertRaises(ValueError):
                 p.encode(value)
         with self.assertRaises(ProtocolError):

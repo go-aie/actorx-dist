@@ -11,6 +11,36 @@ import (
 	"github.com/go-aie/actorx-dist/remote/protocol"
 )
 
+func TestRegisterRejectsCapabilitiesBeforeInstallation(t *testing.T) {
+	// This gateway has no installation backend: an accepted registration would
+	// fail here, rather than silently installing a retired capability variant.
+	g := &remote.Gateway{}
+	h, err := NewHandler(g, Options{APIKey: testKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range []string{`{"stream":true}`, `{"stream":false}`, `null`, `false`, `{}`} {
+		t.Run(capability, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/runtime/rpc", strings.NewReader(
+				`{"jsonrpc":"2.0","id":"register","method":"runtime/register","params":{"type":"demo.ping","capabilities":`+capability+`}}`,
+			))
+			r.Header.Set("Authorization", "Bearer "+testKey)
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set(ProtocolHeader, protocol.Version)
+			r.Header.Set("Accept", "text/event-stream, application/json")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			m, e := protocol.ParseMessage(w.Body.Bytes())
+			if w.Code != http.StatusOK || e != nil || m.Error == nil || m.Error.Code != protocol.InvalidParams {
+				t.Fatalf("status %d, body %s, error %v", w.Code, w.Body.String(), e)
+			}
+			if len(g.Services()) != 0 {
+				t.Fatal("retired capabilities installed a service")
+			}
+		})
+	}
+}
+
 func TestHTTPRequests(t *testing.T) {
 	g := &remote.Gateway{}
 	h, err := NewHandler(g, Options{APIKey: testKey})
@@ -28,7 +58,7 @@ func TestHTTPRequests(t *testing.T) {
 		{"directory", `{"jsonrpc":"2.0","id":9007199254740993,"method":"runtime/services"}`, 200, 0, nil},
 		{"parse", `{`, 200, protocol.ParseError, nil},
 		{"invalid", `false`, 200, protocol.InvalidRequest, nil},
-		{"unknown", `{"jsonrpc":"2.0","id":null,"method":"actor/stream"}`, 200, protocol.MethodNotFound, nil},
+		{"unknown", `{"jsonrpc":"2.0","id":null,"method":"actor/unsupported"}`, 200, protocol.MethodNotFound, nil},
 		{
 			"params",
 			`{"jsonrpc":"2.0","id":1,"method":"runtime/services","params":[]}`,
@@ -93,7 +123,7 @@ func TestHTTPRequests(t *testing.T) {
 		},
 		{"session malformed", `{`, 400, 0, http.Header{SessionHeader: {"wrong"}}},
 		{"session batch", `[{"jsonrpc":"2.0","id":1,"result":null}]`, 400, 0, http.Header{SessionHeader: {"wrong"}}},
-		{"version", `{}`, 400, 0, http.Header{ProtocolHeader: {"v2"}}},
+		{"version", `{}`, 400, 0, http.Header{ProtocolHeader: {"unsupported"}}},
 		{"duplicate version", `{}`, 400, 0, http.Header{ProtocolHeader: {protocol.Version, protocol.Version}}},
 		{"duplicate session", `{}`, 400, 0, http.Header{SessionHeader: {"one", "two"}}},
 		{"content type", `{}`, 415, 0, http.Header{"Content-Type": {"text/plain"}}},
@@ -106,6 +136,7 @@ func TestHTTPRequests(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/runtime/rpc", strings.NewReader(tc.body))
 			r.Header.Set("Authorization", "Bearer "+testKey)
 			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set(ProtocolHeader, protocol.Version)
 			for k, v := range tc.headers {
 				r.Header[k] = v
 			}
@@ -133,6 +164,7 @@ func TestHTTPRequests(t *testing.T) {
 	)
 	r.Header.Set("Authorization", "Bearer "+testKey)
 	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set(ProtocolHeader, protocol.Version)
 	r.Header.Set("Accept", "text/event-stream, application/json")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -155,6 +187,33 @@ func TestHTTPRequests(t *testing.T) {
 		h.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
 		if w.Code != tc.status {
 			t.Fatal(w.Code)
+		}
+	}
+}
+
+// Rejection happens before body reads, so no request kind can register, activate,
+// deliver provider evidence or alter consumer credit/cancellation state.
+func TestProtocolVersionRequiredBeforeDispatch(t *testing.T) {
+	h, err := NewHandler(&remote.Gateway{}, Options{APIKey: testKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range [][]string{nil, {""}, {"actorx.remote/unsupported"}, {protocol.Version + ", " + protocol.Version}, {protocol.Version, protocol.Version}} {
+		for _, session := range []string{"", "provider-session"} {
+			r := httptest.NewRequest(http.MethodPost, "/runtime/rpc", nil)
+			r.Body = unreadBody{t}
+			r.Header.Set("Authorization", "Bearer "+testKey)
+			r.Header.Set("Content-Type", "application/json")
+			r.Header.Set("Accept", "text/event-stream, application/json")
+			if session != "" {
+				r.Header.Set(SessionHeader, session)
+			}
+			r.Header[ProtocolHeader] = version
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("version %q, session %q: %d %s", version, session, w.Code, w.Body.String())
+			}
 		}
 	}
 }

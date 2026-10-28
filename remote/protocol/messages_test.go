@@ -115,7 +115,7 @@ func TestActorMethodVectors(t *testing.T) {
 		},
 		{InvokeMethod, `{"address":` + fixedAddress + `,"input":null}`, ToProvider, InvalidParams},
 		{Create, `{}`, ToGateway, MethodNotFound}, {Services, `{}`, ToProvider, MethodNotFound},
-		{"actor/stream", `{}`, ToGateway, MethodNotFound}, {"runtime.services", `{}`, ToGateway, MethodNotFound},
+		{"actor/unsupported", `{}`, ToGateway, MethodNotFound}, {"runtime.services", `{}`, ToGateway, MethodNotFound},
 	}
 	for _, tt := range cases {
 		m, err := NewRequest(tt.method, "test", json.RawMessage(tt.params))
@@ -241,7 +241,11 @@ func TestResultFailureAndProviderErrors(t *testing.T) {
 	}
 	for _, e := range []*Error{
 		NewError(MethodNotFound, "wrong method", nil),
-		{Code: Full, Message: "x", Data: json.RawMessage(`{"kind":"remote_error"}`)},
+		{
+			Code:    Full,
+			Message: "x",
+			Data:    json.RawMessage(`{"kind":"remote_error"}`),
+		},
 	} {
 		if _, err := NormalizeProviderError(e); err == nil {
 			t.Fatalf("accepted %v", e)

@@ -76,7 +76,8 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
             [
                 t
                 for t in asyncio.all_tasks()
-                if t is not asyncio.current_task() and t.get_name().startswith("actorx-remote-")
+                if t is not asyncio.current_task()
+                and t.get_name().startswith("actorx-remote-")
             ]
         )
 
@@ -99,11 +100,15 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(expired.started)
         await bounded(cast(asyncio.Task[None], expired.job))
         self.assertEqual(self.entered, ["hold"])
-        self.assertTrue(self.gateway.responses.empty())  # cannot extend the expired POST budget
+        self.assertTrue(
+            self.gateway.responses.empty()
+        )  # cannot extend the expired POST budget
 
         # Another instance can still progress while the first holds its lock.
         other = self.gateway.send(address=dict(ADDRESS, id="other"), value="other-id")
-        self.assertEqual((await self.gateway.response(other))["result"]["value"], "other-id")
+        self.assertEqual(
+            (await self.gateway.response(other))["result"]["value"], "other-id"
+        )
         await self.terminal(other)
         self.release.set()
         await self.gateway.response(first)
@@ -138,10 +143,14 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         # Actual handler exit, rather than RPC timeout, opens the instance lock.
         self.release.set()
         await bounded(cast(asyncio.Task[None], timed_out.job))
-        self.assertEqual((await self.gateway.response(third))["result"]["value"], "after-exit")
+        self.assertEqual(
+            (await self.gateway.response(third))["result"]["value"], "after-exit"
+        )
         await self.terminal(third)
         self.assertEqual(self.maximum, 1)
-        self.assertTrue(self.gateway.responses.empty())  # no late success for first or second
+        self.assertTrue(
+            self.gateway.responses.empty()
+        )  # no late success for first or second
         self.assertNotIn(timed_out, self.registration.active)
 
     async def test_eight_slots_include_queued_and_timed_out_handlers(self) -> None:
@@ -186,8 +195,12 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         await self.terminal(overflow, 1001)
         self.assertEqual(len(self.registration.instances), 8)
 
-    async def test_already_expired_request_has_determinate_terminal_and_never_runs(self) -> None:
-        rpc_id = self.gateway.send(value="expired-before-admission", ms=self.deadline(-100))
+    async def test_already_expired_request_has_determinate_terminal_and_never_runs(
+        self,
+    ) -> None:
+        rpc_id = self.gateway.send(
+            value="expired-before-admission", ms=self.deadline(-100)
+        )
         work = await self.terminal(rpc_id, 1005)
         self.assertFalse(work.started)
         self.assertIsNone(work.operation)
@@ -225,7 +238,9 @@ class ExecutionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(self.gateway.responses.empty())
         self.assertEqual(cast(p.Message, work.terminal)["result"]["value"], "success")
 
-    async def test_response_post_shares_original_deadline_and_is_not_retried(self) -> None:
+    async def test_response_post_shares_original_deadline_and_is_not_retried(
+        self,
+    ) -> None:
         posted = asyncio.Event()
         attempts = []
 

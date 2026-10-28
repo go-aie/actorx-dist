@@ -68,7 +68,7 @@ class Gateway:
         assert request.url.path == "/runtime/rpc"
         assert request.headers["Authorization"] == "Bearer test-key"
         assert request.headers["Content-Type"] == "application/json"
-        assert request.headers["X-Actorx-Remote-Protocol"] == p.VERSION
+        assert request.headers["X-Actorx-Remote-Protocol"] == "actorx.remote/v1"
         message = p.envelope(request.content)
         self.requests.append((request, message))
 
@@ -80,6 +80,7 @@ class Gateway:
 
         assert "X-Actorx-Remote-Session" not in request.headers
         if message["method"] == "runtime/register":
+            assert set(message["params"]) == {"type", "description"}
             assert request.headers["Accept"] == "text/event-stream, application/json"
             if self.register_response:
                 return await self.register_response(request, message)
@@ -123,7 +124,9 @@ class Gateway:
     async def install(self, runtime: Runtime) -> None:
         await runtime._http._client.aclose()
         runtime._http._client = httpx.AsyncClient(
-            transport=httpx.MockTransport(self.handle), follow_redirects=False, timeout=None
+            transport=httpx.MockTransport(self.handle),
+            follow_redirects=False,
+            timeout=None,
         )
 
     def send(
@@ -138,12 +141,16 @@ class Gateway:
         self.counter += 1
         params = {
             "address": address or dict(ADDRESS),
-            "deadline_unix_ms": ms if ms is not None else int(time.time() * 1000) + 5000,
+            "deadline_unix_ms": ms
+            if ms is not None
+            else int(time.time() * 1000) + 5000,
         }
         if method == "actor/invoke":
             params["input"] = value
 
-        message = p.request(method, "g:" + str(self.counter) if rpc_id is ... else rpc_id, params)
+        message = p.request(
+            method, "g:" + str(self.counter) if rpc_id is ... else rpc_id, params
+        )
         self.stream.send(message)
         return cast(RPCID, message["id"])
 

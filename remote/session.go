@@ -44,6 +44,7 @@ type session struct {
 	life             context.Context
 	cancel           context.CancelFunc
 	closed           bool
+	streams          map[string]*providerStream
 	events           chan protocol.Message
 	pending          map[string]*pending
 	creates, invokes int
@@ -57,10 +58,12 @@ type session struct {
 func newSession() *session {
 	life, cancel := context.WithCancel(context.Background())
 	return &session{
-		life:        life,
-		cancel:      cancel,
-		events:      make(chan protocol.Message, protocol.Capacity),
+		life:   life,
+		cancel: cancel,
+		// One queue for both operations, with room for creates, credits and cancels.
+		events:      make(chan protocol.Message, protocol.Capacity*8),
 		pending:     map[string]*pending{},
+		streams:     map[string]*providerStream{},
 		activations: map[protocol.Address]*activationRecord{},
 		calls:       map[string]*terminal{},
 	}
@@ -94,7 +97,7 @@ func (s *session) evidenceLocked(id string, a protocol.Address) terminal {
 	return terminal{}
 }
 
-// settle closes the outer Call's evidence window atomically with pending
+// settle closes the outer Call/Stream evidence window atomically with pending
 // withdrawal. A delayed worker/response cannot publish after this boundary.
 func (s *session) settle(id string, a protocol.Address) terminal {
 	s.mu.Lock()
@@ -130,6 +133,9 @@ func (s *session) close() {
 		s.remove(id, p)
 		p.err = actorx.ErrStopped
 		close(p.done)
+	}
+	for _, p := range s.streams {
+		p.stop(actorx.ErrStopped)
 	}
 	close(s.events)
 }
@@ -179,7 +185,13 @@ func (s *session) exchange(ctx context.Context, method string, a protocol.Addres
 	if err != nil {
 		return protocol.Result{}, actorxdist.ErrProtocol
 	}
-	p := &pending{method: method, address: a, requestID: requestID, done: make(chan struct{}), ctx: ctx}
+	p := &pending{
+		method:    method,
+		address:   a,
+		requestID: requestID,
+		done:      make(chan struct{}),
+		ctx:       ctx,
+	}
 
 	s.mu.Lock()
 	if s.closed {
@@ -258,8 +270,23 @@ func (g *Gateway) Accept(ctx context.Context, sessionToken string, response prot
 	if err != nil {
 		return ErrResponse
 	}
+	return g.AcceptEncoded(ctx, sessionToken, raw)
+}
+
+// AcceptEncoded preserves the actual UTF-8 byte size of provider chunk POSTs.
+// Transports must use it rather than decode/re-encode before window accounting.
+func (g *Gateway) AcceptEncoded(ctx context.Context, sessionToken string, raw []byte) error {
+	if g == nil || ctx == nil {
+		return actorx.ErrSetup
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if len(raw) > protocol.MaxMessageBytes {
+		return ErrResponse
+	}
 	parsed, rpcErr := protocol.ParseMessage(raw)
-	if rpcErr != nil || parsed.IsRequest() {
+	if rpcErr != nil || parsed.IsRequest() && (!parsed.IsNotification() || parsed.Method != protocol.ChunkMethod) {
 		return ErrResponse
 	}
 	g.mu.Lock()
@@ -275,6 +302,9 @@ func (g *Gateway) Accept(ctx context.Context, sessionToken string, response prot
 	if found == nil {
 		return ErrSession
 	}
+	if parsed.IsRequest() {
+		return found.acceptChunk(parsed, len(raw))
+	}
 	return found.accept(parsed)
 }
 
@@ -287,6 +317,9 @@ func (s *session) accept(response protocol.Message) error {
 	defer s.mu.Unlock()
 	if s.closed {
 		return ErrSession
+	}
+	if p := s.streams[id]; p != nil {
+		return s.acceptStream(p, response)
 	}
 	p := s.pending[id]
 	if p == nil || p.ctx.Err() != nil {
@@ -325,9 +358,15 @@ func (s *session) accept(response protocol.Message) error {
 		}
 	}
 
-	// Save evidence before waking Started/worker. Create failures must survive dist
+	// Save evidence before waking Started/worker. Create failures must survive actorx-dist
 	// lifecycle error conversion and deletion of their original pending request.
-	evidence := terminal{sent: true, terminal: true, address: p.address, result: result, err: err}
+	evidence := terminal{
+		sent:     true,
+		terminal: true,
+		address:  p.address,
+		result:   result,
+		err:      err,
+	}
 	if p.method == protocol.Create {
 		s.activations[p.address].terminal = evidence
 		if err == nil && result.Failure != nil {

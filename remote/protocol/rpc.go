@@ -121,7 +121,13 @@ func NewRequest(method, id string, params any) (Message, error) {
 		return Message{}, err
 	}
 	idRaw, _ := json.Marshal(id)
-	m := Message{JSONRPC: JSONRPC, ID: idRaw, Method: method, Params: raw, request: true}
+	m := Message{
+		JSONRPC: JSONRPC,
+		ID:      idRaw,
+		Method:  method,
+		Params:  raw,
+		request: true,
+	}
 	if id == "" {
 		return Message{}, fmt.Errorf("empty generated RPC id")
 	}
@@ -182,7 +188,7 @@ func decodeParams(raw []byte, out any, allowed []string, required ...string) err
 		return err
 	}
 	for k, v := range f {
-		if string(v) == "null" && k != "input" && k != "value" {
+		if string(v) == "null" && k != "input" && k != "value" && k != "request_id" {
 			return fmt.Errorf("null parameter")
 		}
 	}
@@ -223,7 +229,7 @@ func (m Message) Parameters(direction Direction) (any, *Error) {
 		}
 		_, err = object(raw, nil)
 		out = struct{}{}
-	case direction == ToGateway && m.Method == Call:
+	case direction == ToGateway && (m.Method == Call || m.Method == Stream):
 		var p CallParams
 		err = decodeParams(raw, &p, []string{"address", "input", "deadline_unix_ms"}, "address", "input")
 		if err == nil {
@@ -244,6 +250,8 @@ func (m Message) Parameters(direction Direction) (any, *Error) {
 			err = validateAddressField(raw, true)
 		}
 		out = p
+	case m.Method == InvokeStreamMethod || m.Method == ChunkMethod || m.Method == Credit || m.Method == Cancel || m.Method == StreamOpen:
+		return m.streamParameters(direction)
 	default:
 		return nil, NewError(MethodNotFound, "Method not found", nil)
 	}
@@ -334,7 +342,7 @@ func ProcessRequests(ctx context.Context, raw []byte, dispatch func(context.Cont
 		}
 		var result any
 		var rpcErr *Error
-		if m.Method == Register && (batch || m.IsNotification()) {
+		if (m.Method == Register || m.Method == Stream) && (batch || m.IsNotification()) {
 			rpcErr = NewError(TransportMode, "Registration requires a single SSE request", nil)
 		} else {
 			result, rpcErr = dispatch(ctx, m, batch)

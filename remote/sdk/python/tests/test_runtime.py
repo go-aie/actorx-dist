@@ -48,7 +48,8 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
             [
                 t
                 for t in asyncio.all_tasks()
-                if t is not asyncio.current_task() and t.get_name().startswith("actorx-remote-")
+                if t is not asyncio.current_task()
+                and t.get_name().startswith("actorx-remote-")
             ]
         )
 
@@ -75,7 +76,8 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("generation", first["params"]["address"])
         self.assertEqual(second["params"]["address"], ADDRESS)
         self.assertLessEqual(
-            abs(first["params"]["deadline_unix_ms"] - int(time.time() * 1000) - 5000), 1000
+            abs(first["params"]["deadline_unix_ms"] - int(time.time() * 1000) - 5000),
+            1000,
         )
         snapshot = actor.address
         snapshot["generation"] = "changed"
@@ -96,7 +98,8 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(RemoteError) as raised:
                 await actor.call({})
             self.assertEqual(
-                (raised.exception.code, raised.exception.rpc_code), ("remote_error", 1000)
+                (raised.exception.code, raised.exception.rpc_code),
+                ("remote_error", 1000),
             )
             self.assertEqual(actor.address, ADDRESS)
         self.assertEqual(self.gateway.requests[-1][1]["params"]["address"], ADDRESS)
@@ -137,7 +140,9 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
                 await actor.call(None)
         self.assertEqual(actor.address, ADDRESS)
 
-    async def test_business_terminal_without_address_cannot_leave_a_cold_handle(self) -> None:
+    async def test_business_terminal_without_address_cannot_leave_a_cold_handle(
+        self,
+    ) -> None:
         async def fail(_: httpx.Request, m: p.Message) -> httpx.Response:
             return httpx.Response(
                 200,
@@ -163,13 +168,17 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
         ):
 
             async def reject(_: httpx.Request, m: p.Message) -> httpx.Response:
-                return httpx.Response(status, headers={"Location": "http://other.test/"})
+                return httpx.Response(
+                    status, headers={"Location": "http://other.test/"}
+                )
 
             self.gateway.call_response = reject
             before = len(self.gateway.requests)
             with self.assertRaises(cls):
                 await actor.call({})
-            self.assertEqual(len(self.gateway.requests), before + 1)  # no redirect/retry
+            self.assertEqual(
+                len(self.gateway.requests), before + 1
+            )  # no redirect/retry
             self.assertFalse(actor._uncertain)
 
         async def reject_params(_: httpx.Request, m: p.Message) -> httpx.Response:
@@ -219,7 +228,9 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
                 if value["id"] == "replace":
                     value["id"] = m["id"]
                 return httpx.Response(
-                    200, content=p.encode(value), headers={"Content-Type": "application/json"}
+                    200,
+                    content=p.encode(value),
+                    headers={"Content-Type": "application/json"},
                 )
 
             self.gateway.call_response = malformed
@@ -317,13 +328,20 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
 
         for n in (1, 2):
             rpc_id = self.gateway.send()
-            self.assertEqual((await self.gateway.response(rpc_id))["result"]["value"], n)
+            self.assertEqual(
+                (await self.gateway.response(rpc_id))["result"]["value"], n
+            )
 
         # A different ID or generation owns a separate business object.
-        for a in (dict(ADDRESS, id="other"), dict(ADDRESS, generation="AQEBAQEBAQEBAQEBAQEBAQ")):
+        for a in (
+            dict(ADDRESS, id="other"),
+            dict(ADDRESS, generation="AQEBAQEBAQEBAQEBAQEBAQ"),
+        ):
             await self.create(a)
             rpc_id = self.gateway.send(address=a)
-            self.assertEqual((await self.gateway.response(rpc_id))["result"]["value"], 1)
+            self.assertEqual(
+                (await self.gateway.response(rpc_id))["result"]["value"], 1
+            )
         self.assertEqual(len(created), 3)
 
         await self.runtime.close()
@@ -349,13 +367,19 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
         await self.create()
         for value in ("error", "non-json"):
             rpc_id = self.gateway.send(value=value)
-            self.assertEqual((await self.gateway.response(rpc_id))["error"]["code"], 1000)
+            self.assertEqual(
+                (await self.gateway.response(rpc_id))["error"]["code"], 1000
+            )
 
-    async def test_provider_params_unknown_method_notification_and_null_id(self) -> None:
+    async def test_provider_params_unknown_method_notification_and_null_id(
+        self,
+    ) -> None:
         await self.register()
         await self.create()
         self.gateway.stream.send(p.request("future/method", "unknown", {}))
-        self.assertEqual((await self.gateway.response("unknown"))["error"]["code"], -32601)
+        self.assertEqual(
+            (await self.gateway.response("unknown"))["error"]["code"], -32601
+        )
         params: object
         for params in (
             [],
@@ -429,7 +453,14 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.gateway.requests), 2)
 
     async def test_registration_validates_first_frame(self) -> None:
-        for update in ({"protocol": "future"}, {"type": "other"}, {"session_token": ""}):
+        for update in (
+            {"protocol": "future"},
+            {"protocol": "actorx.remote/unsupported"},
+            {"type": "other"},
+            {"session_token": ""},
+            {"capabilities": {"stream": True}},
+            {"capabilities": None},
+        ):
 
             async def invalid(_: httpx.Request, message: p.Message) -> httpx.Response:
                 info = {
@@ -440,7 +471,9 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
                 info.update(update)
                 self.gateway.stream.send(p.success(message["id"], info))
                 return httpx.Response(
-                    200, headers={"Content-Type": "text/event-stream"}, stream=self.gateway.stream
+                    200,
+                    headers={"Content-Type": "text/event-stream"},
+                    stream=self.gateway.stream,
                 )
 
             self.gateway.register_response = invalid
@@ -452,7 +485,9 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
     async def test_registration_timeout_rolls_back_and_closes_stream(self) -> None:
         async def no_frame(_: httpx.Request, message: p.Message) -> httpx.Response:
             return httpx.Response(
-                200, headers={"Content-Type": "text/event-stream"}, stream=self.gateway.stream
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                stream=self.gateway.stream,
             )
 
         self.gateway.register_response = no_frame
@@ -467,11 +502,17 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
             self.gateway.stream.send(
                 p.success(
                     "other-id",
-                    {"protocol": p.VERSION, "type": "demo.ping", "session_token": "session-token"},
+                    {
+                        "protocol": p.VERSION,
+                        "type": "demo.ping",
+                        "session_token": "session-token",
+                    },
                 )
             )
             return httpx.Response(
-                200, headers={"Content-Type": "text/event-stream"}, stream=self.gateway.stream
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                stream=self.gateway.stream,
             )
 
         self.gateway.register_response = invalid
@@ -487,7 +528,9 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.wait_closed()
         self.assertTrue(self.runtime._http._client.is_closed)
 
-    async def test_eof_reclaims_registration_and_wait_closed_reports_failure(self) -> None:
+    async def test_eof_reclaims_registration_and_wait_closed_reports_failure(
+        self,
+    ) -> None:
         await self.register()
         await self.create()
         self.gateway.stream.queue.put_nowait(None)
@@ -501,7 +544,9 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
         raw = b"data: " + p.encode(message) + b"\n\n"
         for byte in raw:
             self.gateway.stream.queue.put_nowait(bytes([byte]))
-        self.assertEqual((await self.gateway.response("split"))["error"]["code"], -32601)
+        self.assertEqual(
+            (await self.gateway.response("split"))["error"]["code"], -32601
+        )
 
         # An incomplete over-limit frame must also close the provider connection.
         self.gateway.stream.queue.put_nowait(b"data: " + b"x" * 8193)

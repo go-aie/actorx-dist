@@ -132,6 +132,6 @@ client 完成调用后自动退出，不会停止远端 Counter。结束示例�
 | [调用语义](docs/runtime.zh.md) | Send/Call/Stream、期限、错误和容量。 |
 | [生命周期](docs/lifecycle.zh.md) | Stop/Wait、对象寿命和关闭责任。 |
 | [部署指南](docs/deployment.zh.md) | 配置、权限、契约升级与显式恢复。 |
-| [跨语言接入](remote/README.zh.md) | HTTP/SSE Call、Python provider/consumer 与 remote 协议。 |
+| [跨语言接入](remote/README.zh.md) | HTTP/SSE Call/Stream、Python provider/consumer 与 remote 协议。 |
 
 实现细节见[架构与核心接入](docs/architecture.zh.md)、[wire 契约与资源限制](docs/contract.zh.md)、[Registry 协议](docs/registry.zh.md)。真实发布版本消费、实际跨主机网络与复制配置尚未验证。
