@@ -52,6 +52,15 @@ jobs:
       - name: Test with race detector
         run: go test -race -count=1 -timeout=5m ./...
 
+      - name: Test standalone Go Remote SDK
+        working-directory: remote/sdk/go
+        run: |
+          for vector in v1.json json-boundaries.json; do
+            cmp "../../protocol/testdata/$vector" "testdata/$vector"
+          done
+          go test -race -count=1 -timeout=5m ./...
+          go vet ./...
+
       - name: Test Python Remote SDK
         run: |
           python3 -m venv /tmp/actorx-remote-ci

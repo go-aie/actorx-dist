@@ -20,7 +20,7 @@ provider 对象 ← provider SDK ← 注册 SSE create/invoke/invoke_stream
 | actorx-dist | Type/ID 寻址、选代、代理唯一归属、Call 与 Stream |
 | remote | Gateway、注册、provider 会话、ProxyActor 与响应关联 |
 | remote/http | 鉴权、路由、JSON 转换、SSE 和连接/写期限 |
-| Python SDK | Actor 实例创建、串行 handler、地址状态与 HTTP/SSE 传输 |
+| Go/Python SDK | Actor 实例创建、串行 handler、地址状态与 HTTP/SSE 传输 |
 
 gateway 借用已有的一个 `*actorxdist.Runtime`，外部程序无需 NATS 客户端或监听端口。HTTP/SSE 是接入适配，不是新增的 actorx Channel 实现。SDK Runtime 管理外部连接及 Python 对象，actorxdist.Runtime 管理代理归属；SDK 不 claim 归属，也不生成 actorx-dist generation。
 
@@ -75,7 +75,9 @@ Go 代理每实例只受理一个活动业务操作（Call/Stream），重叠调
 
 ## Go 接入与所有权
 
-Go 代码属于现有 actorx-dist 模块。[Gateway](../gateway.go)接入已有 Runtime；[remotehttp.NewHandler](../http/handler.go)返回 `net/http.Handler`，不自行启动服务。HTTP 包导入名为 `remotehttp`。
+Go 应用可通过独立的 [Go SDK](../sdk/go/README.zh.md) 经 HTTP/SSE 注册和调用 Actor，仅依赖标准库，与 Python SDK 使用相同 gateway。SDK 运行时拥有连接和实例，使用 context 控制操作并显式 Close。
+
+嵌入 gateway 的 Go 服务端代码属于 actorx-dist 根模块。[Gateway](../gateway.go)接入已有 Runtime；[remotehttp.NewHandler](../http/handler.go)返回 `net/http.Handler`，不自行启动服务。HTTP 包导入名为 `remotehttp`。
 
 | API | 所有权与完成语义 |
 | --- | --- |
@@ -113,7 +115,7 @@ Python `Runtime.close()` 关闭连接、取消并汇合 SDK 自有任务，然�
 
 Actor 目录统一使用 `runtime/actors` 和结果字段 `actors`，Go 接口为 `Gateway.Actors()`；不可用错误为 `actor_unavailable`（1002）。早期开发名称已移除，目录与错误处理的调用方需同步更新；本次命名调整不改变 actorx-dist DTO 或 Type 契约。
 
-当前仍处于早期开发，统一后的 gateway 和 Python SDK 保留 `actorx.remote/v1`，两端实现须配套使用。SDK 每次 POST 自动携带 `X-Actorx-Remote-Protocol: actorx.remote/v1`，并校验注册结果；HTTP 在鉴权后、分派前对缺失或不匹配的版本返回 400。删除原注册参数 `stream=True` 及所有 `capabilities` 字段。对象实现 `handle`、`handle_stream` 中的一种或两种，统一通过 `runtime.register` 注册 Actor。
+当前仍处于早期开发，统一后的 gateway 和 Go/Python SDK 保留 `actorx.remote/v1`，两端实现须配套使用。SDK 每次 POST 自动携带 `X-Actorx-Remote-Protocol: actorx.remote/v1`，并校验注册结果；HTTP 在鉴权后、分派前对缺失或不匹配的版本返回 400。删除原注册参数 `stream=True` 及所有 `capabilities` 字段。对象实现 `handle`、`handle_stream` 中的一种或两种，统一通过 `runtime.register` 注册 Actor。
 
 remote wire 版本与 actorx-dist Type 契约分别管理。现在所有注册固定包含 Call、Stream、Started 绑定。原 Call-only Type 新增绑定会改变指纹：已有 Registry 上，provider 和 consumer 须同时选择新 Type，例如 `demo.counter.v2`。重启或 Unregister 不会抹掉已发布契约。原 Stream-capable Type 在 DTO 和绑定不变时保持指纹；仅重命名 Go 代理结构体不要求新 Type。详见[契约参考](../../docs/contract.zh.md)。
 

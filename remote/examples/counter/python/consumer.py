@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 
 from actorx_remote import Runtime
@@ -15,14 +14,14 @@ async def main(args: argparse.Namespace) -> None:
         actor = runtime.addr(args.type, args.id)
 
         # Reusing the same Addr also reuses the remote Actor's state.
-        for _ in range(args.count):
+        for _ in range(2):
             count = await actor.call({"n": 5})
-            print(json.dumps(count), flush=True)
+            print(count, flush=True)
 
         # A different logical ID must have its own instance and counter.
         other = runtime.addr(args.type, args.id + "-other")
         count = await other.call({"n": 5})
-        print(json.dumps(count), flush=True)
+        print(count, flush=True)
 
 
 if __name__ == "__main__":
@@ -30,8 +29,4 @@ if __name__ == "__main__":
     parser.add_argument("--server", default="http://127.0.0.1:8080")
     parser.add_argument("--type", default="demo.counter")
     parser.add_argument("--id", default="orders-42")
-    parser.add_argument("--count", type=int, default=2)
-    args = parser.parse_args()
-    if args.count < 1:
-        parser.error("--count must be positive")
-    asyncio.run(main(args))
+    asyncio.run(main(parser.parse_args()))

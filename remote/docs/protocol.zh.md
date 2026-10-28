@@ -2,7 +2,7 @@
 
 [English](protocol.md) | 中文
 
-`actorx.remote/v1` 通过 HTTP/SSE 连接 consumer、gateway 和 provider。本文是 Call 与 Stream 的完整 wire 说明；使用 Python SDK 时，消息编解码、版本 Header、流控和响应关联由 SDK 管理。首次使用可先运行 [Counter](../examples/counter/README.zh.md) 或 [Chat](../examples/chat/README.zh.md)，再查阅 [SDK 指南](../sdk/python/README.zh.md)。
+`actorx.remote/v1` 通过 HTTP/SSE 连接 consumer、gateway 和 provider。本文是 Call 与 Stream 的完整 wire 说明；使用 Go/Python SDK 时，消息编解码、版本 Header、流控和响应关联由 SDK 管理。首次使用可先运行 [Counter](../examples/counter/README.zh.md) 或 [Chat](../examples/chat/README.zh.md)，再查阅 [SDK 指南](../sdk/python/README.zh.md)。
 
 ## 共同模型
 
@@ -59,7 +59,7 @@ Gateway/SDK 生成非空字符串 ID；协议也接受数字和 null，并保留
 
 JSON 必须是 UTF-8，不接受重复键或 NaN/Infinity。忽略未知信封字段，拒绝未知方法参数（-32602）。业务 `input`/`value` 必填但允许 null，内部内容由应用定义；数字不在边界处舍入。
 
-普通请求 batch 最多八项，在同一 HTTP 预算内顺序执行，不是事务；通知无响应，全通知文档返回 204。空 batch/非法元素遵循 JSON-RPC 错误规则。Provider 响应、chunk 和流控制均使用单条 POST；batch 混入 provider 响应会在分派前整体拒绝。Python SDK 不提供 batch API。
+普通请求 batch 最多八项，在同一 HTTP 预算内顺序执行，不是事务；通知无响应，全通知文档返回 204。空 batch/非法元素遵循 JSON-RPC 错误规则。Provider 响应、chunk 和流控制均使用单条 POST；batch 混入 provider 响应会在分派前整体拒绝。Go/Python SDK 不提供 batch API。
 
 ## 身份、注册与方法
 
@@ -691,3 +691,5 @@ Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出
 执行容量、对象数量与队列限制见[运行模型](runtime.zh.md#资源限制)。address.version=1、jsonrpc="2.0" 和 actorx.remote/v1 各自描述不同层，互不联动。v1 固定提供两种通信操作，不协商 capabilities；SDK 删除旧 `stream=True` 参数。升级 gateway/SDK 不会清除已发布的 actorx-dist Type 契约，旧 Type 的处理见[迁移说明](runtime.zh.md#协议与-type-迁移)。Send、WebSocket、自动重连/重试和续读暂未实现。
 
 实现参考：[基础 DTO](../protocol/messages.go)、[Stream DTO](../protocol/stream.go)、[信封与方法校验](../protocol/rpc.go)、[HTTP 接入](../http/handler.go)。Go/Python 共用 [v1 固定报文](../protocol/testdata/v1.json)；内部 DTO 与代理接线见[运行模型](runtime.zh.md#go-桥接)。
+
+- [Go SDK](../sdk/go/README.zh.md) / [Python SDK](../sdk/python/README.zh.md)

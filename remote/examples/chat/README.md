@@ -1,72 +1,77 @@
-# Python remote Actor streaming chat
+# Remote Actor streaming Chat
 
 English | [中文](README.zh.md)
 
-A Python provider yields a simulated answer in six fragments; a separate consumer prints them as they arrive. The Go gateway routes through internal actorx-dist/NATS. Python programs need only its URL and a shared API key, with no model service or NATS client.
+A Go or Python provider replies in six fragments, and a consumer displays them incrementally. The same Actor supports Call to demonstrate shared session state. Both sides need only a gateway URL and API key. They connect over HTTP/SSE, without listening on a port or installing NATS clients.
 
 ## Run
 
-Requires Go 1.27, Python 3.11+ and a JetStream-enabled `nats-server`. Run from the repository root:
+Requires Go 1.27, Python 3.11+ for either Python role, and a JetStream-enabled `nats-server` for the gateway. Run these commands from the repository root. Each Go example is an independent module with only the standard library and SDK; a local replace selects SDK source.
 
 ```sh
 python3 -m venv /tmp/actorx-remote-demo-venv
 /tmp/actorx-remote-demo-venv/bin/python -m pip install -e remote/sdk/python
 ```
 
-Generate a random API key with `secrets.token_urlsafe(32)` and inject the same `REMOTE_API_KEY` into the gateway, provider and consumer terminals through a trusted environment. Do not pass the key as a command-line argument.
+Generate a random key with `secrets.token_urlsafe(32)` and inject the same `REMOTE_API_KEY` through a trusted environment into gateway, provider and consumer terminals. Keep keys out of command arguments.
 
-Terminal 1, internal NATS:
+Terminal 1, NATS with separate development storage:
 
 ```sh
 nats-server -c examples/nats.conf -sd /tmp/actorx-remote-chat
 ```
 
-Terminal 2, the general gateway shared with Counter:
+Terminal 2, the shared gateway:
 
 ```sh
 GOWORK=off go run ./remote/examples/counter/gateway \
   -nats nats://127.0.0.1:4222 -listen 127.0.0.1:8080
 ```
 
-Terminal 3, provider:
+Terminal 3, choose one provider:
 
 ```sh
-/tmp/actorx-remote-demo-venv/bin/python remote/examples/chat/provider.py
+# Go
+(cd remote/examples/chat/go && GOWORK=off go run ./provider)
+
+# Python
+/tmp/actorx-remote-demo-venv/bin/python remote/examples/chat/python/provider.py
 ```
 
-Terminal 4, consumer:
+Terminal 4, choose one consumer:
 
 ```sh
-/tmp/actorx-remote-demo-venv/bin/python remote/examples/chat/consumer.py
+# Go
+(cd remote/examples/chat/go && GOWORK=off go run ./consumer)
+
+# Python
+/tmp/actorx-remote-demo-venv/bin/python remote/examples/chat/python/consumer.py
 ```
 
-Add `--consume-delay 0.1` to spend 100ms processing each item. The SDK acknowledges an item when iteration requests the next one. The consumer exits on completion; stop provider, gateway, then NATS with Ctrl-C.
+Choose each role independently; Go and Python can be mixed.
+
+Both roles accept `--server` and `--type`, defaulting to `http://127.0.0.1:8080` and `demo.chat`. Keep the Type identical on both sides; consumer `--id` selects the logical instance. Run one provider per Type at a time. Consumers exit when done; stop provider → gateway → NATS with Ctrl-C.
 
 ## Expected output
 
-The answer appears incrementally, followed by its item count:
+For a fresh ID:
 
 ```text
+call turn: 1
 answer: Actors use messages to coordinate work.
-chunks: 6
 ```
 
-The provider prints `Chat actor created` and `Chat turn 1` on the first request. Running the consumer again with the same ID prints `Chat turn 2`, reusing that generation's object. `--id another` creates a separate instance.
+The consumer calls once, then streams an answer from the same Actor. The provider prints `Chat turn 1` and `Chat turn 2`; reusing the ID keeps advancing its turn.
 
 ## Implementation
 
-[provider.py](provider.py) implements the `handle_stream(message)` async generator and registers the Actor with `runtime.register(type, ChatActor)`, just like Counter. Registration does not create an instance; the first Stream for a new ID creates the object. Six fragments exceed the four-item sending window. Slow consumption propagates backpressure through the gateway and actorx-dist.
+[Go provider](go/provider/main.go) implements `Actor.Handle` and `StreamActor.HandleStream`, using `StreamWriter.Write`; [Python provider](python/provider.py) implements `handle` and the asynchronous generator `handle_stream`. Both methods share the turns field and instance lock. No model service is needed.
 
-[consumer.py](consumer.py) uses `async with actor.stream(...) as chunks` and `async for`. Exhaustion means an explicit terminal was received and all items were processed. Context exit after a break or exception, and Runtime shutdown, cancel unfinished streams. The default total deadline is five seconds; `timeout` accepts up to 60 seconds. This example uses 30 seconds.
+[Go consumer](go/consumer/main.go) uses `Next/Value/Err` with deferred Close; [Python consumer](python/consumer.py) uses an async context and async for. Both close the stream when finished.
 
-This is a source-based local example without reconnection, retry or resume. Finishing a consumer does not stop its provider.
-
-ChatActor only implements `handle_stream`. It can also implement `handle` for a single JSON reply; both operations then share one instance and run serially. Calling `.call(...)` on this Stream-only example raises `UnsupportedOperationError` (1013) with the selected address, after which the same Addr can still stream. See the [SDK guide](../../sdk/python/README.md) for an Actor with both methods.
-
-The gateway and SDK use `actorx.remote/v1` together. An existing Stream-capable Type keeps its actorx-dist contract when its DTOs and bindings are unchanged; a former Call-only Type requires a new Type. See [protocol and Type migration](../../docs/runtime.md#protocol-and-type-migration).
+This demonstrates local source use. The Go local replace does not prove released-package consumption; providers do not reconnect automatically. Use matching gateway and SDK `actorx.remote/v1` implementations. If an old Call-only Type contract exists, choose a new Type for both roles rather than clearing a shared Registry; see [Protocol and Type migration](../../docs/runtime.md#protocol-and-type-migration).
 
 ## Links
 
-- [Python SDK](../../sdk/python/README.md)
-- [Remote protocol: Stream](../../docs/protocol.md#stream-exchange) and [runtime model](../../docs/runtime.md)
-- [Call-based Counter](../counter/README.md)
+- [Go SDK](../../sdk/go/README.md) / [Python SDK](../../sdk/python/README.md)
+- [Remote](../../README.md) / [Runtime model](../../docs/runtime.md)

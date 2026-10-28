@@ -18,6 +18,23 @@ from support import ADDRESS
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_shared_json_boundary_vectors(self) -> None:
+        vectors = cast(
+            dict[str, list[str]],
+            p.decode(
+                (
+                    Path(__file__).resolve().parents[3]
+                    / "protocol/testdata/json-boundaries.json"
+                ).read_bytes()
+            ),
+        )
+        for raw in vectors["valid"]:
+            with self.subTest(raw=raw):
+                p.envelope(raw.encode())
+        for raw in vectors["invalid"]:
+            with self.subTest(raw=raw), self.assertRaises(ProtocolError):
+                p.envelope(raw.encode())
+
     def test_v1_wire_vectors(self) -> None:
         vectors = cast(
             dict[str, p.Message],
@@ -70,6 +87,8 @@ class ProtocolTests(unittest.TestCase):
         error = p.remote_error(p.response(p.encode(unavailable), "c:2")["error"])
         self.assertEqual(error.code, "actor_unavailable")
         self.assertEqual(error.rpc_code, 1002)
+
+        # Unsupported operations must retain selection evidence for either API.
         call = p.failure("c:1", 1013, actor_address=ADDRESS)
         self.assertEqual(vectors["call_unsupported"], call)
         stream = p.failure("s:1", 1013, actor_address=ADDRESS)
@@ -84,6 +103,7 @@ class ProtocolTests(unittest.TestCase):
             self.assertEqual(p.address(reply["error"]["data"]["address"]), ADDRESS)
             if name == "stream_unsupported":
                 self.assertEqual(reply["error"]["data"]["final_seq"], 0)
+
         for name, value in vectors.items():
             with self.subTest(name=name):
                 self.assertEqual(p.decode(p.encode(value)), value)
@@ -105,9 +125,16 @@ class ProtocolTests(unittest.TestCase):
 
     def test_p0_method_vectors(self) -> None:
         vectors = [
-            b'{"jsonrpc":"2.0","id":"p:register-1","method":"runtime/register","params":{"type":"demo.ping","description":"Ping/Pong provider"}}',
+            (
+                b'{"jsonrpc":"2.0","id":"p:register-1","method":"runtime/register",'
+                b'"params":{"type":"demo.ping","description":"Ping/Pong provider"}}'
+            ),
             b'{"jsonrpc":"2.0","id":"list-1","method":"runtime/actors"}',
-            b'{"jsonrpc":"2.0","id":"c:1","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},"input":{"n":900719925474099312345},"deadline_unix_ms":1890000000000}}',
+            (
+                b'{"jsonrpc":"2.0","id":"c:1","method":"actor/call",'
+                b'"params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},'
+                b'"input":{"n":900719925474099312345},"deadline_unix_ms":1890000000000}}'
+            ),
             p.encode(
                 p.request(
                     "actor/create",

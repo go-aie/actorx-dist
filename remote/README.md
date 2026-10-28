@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 Remote lets applications written in different languages call stateful Actors over HTTP. Call returns a single result; Stream delivers results incrementally. Applications need only the gateway URL and API key; the gateway is built on actorx-dist.
 
-The implementation provides a Go gateway and a Python SDK installed from source. Send, WebSocket, automatic retry/reconnection and provider recovery are outside its current scope.
+The implementation provides a Go gateway and Go/Python SDKs used from source. Send, WebSocket, automatic retry/reconnection and provider recovery are outside its current scope.
 
 ## Architecture and data flow
 
@@ -66,8 +66,8 @@ Start with Counter, then try Chat for incremental replies. Each example includes
 
 | Example | What you will learn |
 | --- | --- |
-| [Counter](examples/counter/README.md) | Register a Python provider, increment a counter through Call, and observe retained totals and independent state by ID. |
-| [Chat](examples/chat/README.md) | Consume a Stream incrementally and observe backpressure with a slow consumer. |
+| [Counter](examples/counter/README.md) | Register a Go or Python provider, increment a counter through Call, and observe retained totals and independent state by ID. |
+| [Chat](examples/chat/README.md) | Call and consume a Stream incrementally on the same Actor. |
 
 ## Guides and reference
 
@@ -75,6 +75,9 @@ After running an example, use the SDK guide to write your own provider or consum
 
 | Guide | Contents |
 | --- | --- |
+| [Go SDK](sdk/go/README.md) | Independent module, provider/consumer APIs, contexts, errors and explicit cleanup. |
 | [Python SDK](sdk/python/README.md) | Installation, provider and consumer APIs, types, exceptions and Stream usage. |
 | [Runtime and lifecycle](docs/runtime.md) | Activation, fixed generations, deadlines, concurrency, Go embedding and cleanup ownership. |
 | [Protocol](docs/protocol.md) | Call/Stream methods and exchanges, HTTP/SSE, flow control, cancellation, errors and limits. |
+
+Maintainers: see [Development and releases](docs/development.md).

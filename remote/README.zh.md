@@ -4,7 +4,7 @@
 
 Remote 让不同语言编写的应用通过 HTTP 调用有状态 Actor：Call 一次返回结果，Stream 逐段返回结果。应用只需 gateway URL 与 API Key，gateway 基于 actorx-dist 构建。
 
-当前提供 Go gateway 与从源码安装的 Python SDK。Send、WebSocket、自动重试/重连和 provider 恢复不在当前实现范围内。
+当前提供 Go gateway，以及从源码使用的 Go/Python SDK。Send、WebSocket、自动重试/重连和 provider 恢复不在当前实现范围内。
 
 ## 架构与数据流
 
@@ -66,8 +66,8 @@ flowchart TB
 
 | 示例 | 学习内容 |
 | --- | --- |
-| [Counter](examples/counter/README.zh.md) | 注册 Python provider，通过 Call 累加计数，观察状态保留与不同 ID 的独立状态。 |
-| [Chat](examples/chat/README.zh.md) | 逐段消费 Stream，通过慢消费观察背压。 |
+| [Counter](examples/counter/README.zh.md) | 注册 Go 或 Python provider，通过 Call 累加计数，观察状态保留与不同 ID 的独立状态。 |
+| [Chat](examples/chat/README.zh.md) | 对同一 Actor 执行 Call，再逐段消费 Stream。 |
 
 ## 使用指南与参考
 
@@ -75,6 +75,9 @@ flowchart TB
 
 | 文档 | 内容 |
 | --- | --- |
+| [Go SDK](sdk/go/README.zh.md) | 独立模块、provider/consumer API、context、错误与显式关闭。 |
 | [Python SDK](sdk/python/README.zh.md) | 安装、provider 与 consumer API、类型、异常及 Stream 用法。 |
 | [运行模型与生命周期](docs/runtime.zh.md) | 激活、固定代次、期限、并发、Go 接入和清理责任。 |
 | [协议](docs/protocol.zh.md) | Call/Stream 方法与消息过程、HTTP/SSE、流控、取消、错误及限制。 |
+
+维护者参见[维护与发布](docs/development.zh.md)。

@@ -113,3 +113,5 @@ count = await actor.call({"n": 5})  # 原 Addr、同一代实例
 - [Counter](../../examples/counter/README.zh.md)与 [Chat](../../examples/chat/README.zh.md)：独立进程示例。
 - [运行模型与生命周期](../../docs/runtime.zh.md)：地址、并发与清理语义。
 - [Remote 协议](../../docs/protocol.zh.md)：Call/Stream 消息过程、wire 限制、两段 credit 和窗口。
+
+- [Go SDK](../go/README.zh.md)：通过相同 gateway 与 Python provider/consumer 互通。

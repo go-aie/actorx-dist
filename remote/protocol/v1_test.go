@@ -115,3 +115,24 @@ func TestV1ProviderFailureWhitelist(t *testing.T) {
 		t.Fatal("accepted mismatched unsupported_operation kind")
 	}
 }
+
+func TestJSONBoundaryVectors(t *testing.T) {
+	raw, err := os.ReadFile("testdata/json-boundaries.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vectors struct{ Valid, Invalid []string }
+	if err := json.Unmarshal(raw, &vectors); err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range vectors.Valid {
+		if _, err := ParseMessage([]byte(raw)); err != nil {
+			t.Fatalf("valid vector %s: %v", raw, err)
+		}
+	}
+	for _, raw := range vectors.Invalid {
+		if _, err := ParseMessage([]byte(raw)); err == nil {
+			t.Fatalf("accepted invalid vector %s", raw)
+		}
+	}
+}

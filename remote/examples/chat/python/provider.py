@@ -4,28 +4,35 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import signal
 
 from actorx_remote import JSONValue, Runtime
 
 
-class Counter:
+class ChatActor:
+    """Share turn state between Call and Stream under the SDK's instance lock."""
+
     def __init__(self) -> None:
-        self.count = 0
-        print(json.dumps({"event": "created"}), flush=True)
+        self.turns = 0
+        print("Chat actor created", flush=True)
+
+    def begin(self, message: JSONValue) -> None:
+        if message != {"topic": "Actors"}:
+            raise ValueError("Expected a topic")
+
+        self.turns += 1
+        print(f"Chat turn {self.turns}", flush=True)
 
     async def handle(self, message: JSONValue) -> JSONValue:
-        if not isinstance(message, dict) or set(message) != {"n"}:
-            raise ValueError("Expected Add with an integer n")
-        n = message["n"]
-        if type(n) is not int:
-            raise ValueError("Expected Add with an integer n")
+        self.begin(message)
+        return {"text": "Actors use messages to coordinate work.", "turn": self.turns}
 
-        self.count += n
-        print(json.dumps({"event": "invoke", "count": self.count}), flush=True)
-        return self.count
+    async def handle_stream(self, message: JSONValue):
+        self.begin(message)
+        # Simulate an answer arriving in fragments without a model service.
+        for text in ("Actors", " use", " messages", " to", " coordinate", " work."):
+            yield {"text": text, "turn": self.turns}
 
 
 async def main(args: argparse.Namespace) -> None:
@@ -35,16 +42,20 @@ async def main(args: argparse.Namespace) -> None:
         loop.add_signal_handler(sig, stop.set)
 
     async with Runtime(args.server, api_key=os.environ["REMOTE_API_KEY"]) as runtime:
-        # Registration does not create an instance; the first Call for a new ID does.
-        await runtime.register(args.type, Counter, description="Python Counter")
-        print(json.dumps({"event": "registered", "type": args.type}), flush=True)
+        # Registration does not create an instance; the first Call or Stream does.
+        await runtime.register(
+            args.type, ChatActor, description="Python streaming chat"
+        )
+        print(f"Registered {args.type}", flush=True)
 
         # Exit on either a local signal or an SDK connection failure. Awaiting
         # closed propagates the latter, while the context manager owns cleanup.
         closed = asyncio.create_task(runtime.wait_closed())
         stopping = asyncio.create_task(stop.wait())
         try:
-            done, _ = await asyncio.wait((closed, stopping), return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(
+                (closed, stopping), return_when=asyncio.FIRST_COMPLETED
+            )
             if closed in done:
                 await closed
         finally:
@@ -53,11 +64,11 @@ async def main(args: argparse.Namespace) -> None:
             stopping.cancel()
             await asyncio.gather(closed, stopping, return_exceptions=True)
 
-    print(json.dumps({"event": "closed"}), flush=True)
+    print("Provider closed", flush=True)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", default="http://127.0.0.1:8080")
-    parser.add_argument("--type", default="demo.counter")
+    parser.add_argument("--type", default="demo.chat")
     asyncio.run(main(parser.parse_args()))

@@ -113,3 +113,5 @@ The gateway and SDK retain `actorx.remote/v1` during early development and must 
 - [Counter](../../examples/counter/README.md) and [Chat](../../examples/chat/README.md): independent-process examples.
 - [Runtime and lifecycle](../../docs/runtime.md): addressing, concurrency and cleanup semantics.
 - [Remote protocol](../../docs/protocol.md): Call/Stream exchanges, wire limits, the two credit segments and windows.
+
+- [Go SDK](../go/README.md): interoperates with Python providers/consumers through the same gateway.

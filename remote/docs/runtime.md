@@ -20,9 +20,9 @@ provider object ← provider SDK ← registration SSE create/invoke/invoke_strea
 | actorx-dist | Type/ID addressing, generation selection, unique proxy ownership, Call and Stream |
 | remote | Gateway, registrations, provider sessions, ProxyActor and response correlation |
 | remote/http | Authentication, routing, JSON conversion, SSE and connection/write deadlines |
-| Python SDK | Actor instance creation, serial handlers, address state and HTTP/SSE transport |
+| Go/Python SDK | Actor instance creation, serial handlers, address state and HTTP/SSE transport |
 
-The gateway borrows one existing `*actorxdist.Runtime`. External programs do not need a NATS client or listener. HTTP/SSE is an access adapter, not another actorx Channel implementation. The SDK Runtime manages external connections and Python objects; actorxdist.Runtime manages proxy ownership. The SDK never claims ownership or generates actorx-dist generations.
+The gateway borrows one existing `*actorxdist.Runtime`. External programs do not need a NATS client or listener. HTTP/SSE is an access adapter, not another actorx Channel implementation. The SDK Runtime manages external connections and business objects; actorxdist.Runtime manages proxy ownership. The SDK never claims ownership or generates actorx-dist generations.
 
 The provider registers an Actor through the SDK and opens a registration SSE stream. The SDK's registration call returns after validating the result, before any business object is created. `addr(type, id)` only creates a local handle. Its first Call or Stream asks actorx-dist to find or activate a ProxyActor. During `Started`, the proxy obtains its complete Self address and waits for `actor/create` to succeed. Only then can `actor/invoke` or `actor/invoke_stream` run. An existing ready proxy skips creation.
 
@@ -75,7 +75,9 @@ Validated creation failures are retained by registration and complete address un
 
 ## Go embedding and ownership
 
-Go code is part of the existing actorx-dist module. [Gateway](../gateway.go) coordinates an existing Runtime; [remotehttp.NewHandler](../http/handler.go) returns a `net/http.Handler` and does not start a server. The HTTP package import name is `remotehttp`.
+Go applications can use the independent [Go SDK](../sdk/go/README.md) over HTTP/SSE, with only standard library dependencies and the same gateway as Python. Its Runtime owns connections and instances, with contexts for operations and explicit Close.
+
+Go server code embedding the gateway belongs to the actorx-dist root module. [Gateway](../gateway.go) coordinates an existing Runtime; [remotehttp.NewHandler](../http/handler.go) returns a `net/http.Handler` and does not start a server. The HTTP package import name is `remotehttp`.
 
 | API | Ownership and completion |
 | --- | --- |
@@ -113,7 +115,7 @@ The independent-process example demonstrates the local source chain, not release
 
 The Actor directory uses `runtime/actors` and the result field `actors`; the Go API is `Gateway.Actors()`. The unavailable error is `actor_unavailable` (1002). Earlier development names have been removed, so directory callers and error handling must be updated together. This naming change does not alter actorx-dist DTOs or Type contracts.
 
-During early development, the unified gateway and Python SDK retain `actorx.remote/v1`. Use matching gateway and SDK implementations. The SDK adds `X-Actorx-Remote-Protocol: actorx.remote/v1` to every POST and validates the registration result. After authentication, HTTP rejects missing or mismatched versions with 400 before dispatch. Remove the old `stream=True` registration argument and all `capabilities` fields. Implement `handle`, `handle_stream`, or both, and use `runtime.register` for every Actor.
+During early development, the unified gateway and Go/Python SDKs retain `actorx.remote/v1`. Use matching gateway and SDK implementations. The SDK adds `X-Actorx-Remote-Protocol: actorx.remote/v1` to every POST and validates the registration result. After authentication, HTTP rejects missing or mismatched versions with 400 before dispatch. Remove the old `stream=True` registration argument and all `capabilities` fields. Implement `handle`, `handle_stream`, or both, and use `runtime.register` for every Actor.
 
 The remote wire version and actorx-dist Type contract are separate. All registrations now have fixed Call, Stream and Started bindings. A former Call-only Type gains a binding and changes its fingerprint: on an existing Registry, choose a new Type such as `demo.counter.v2` for both provider and consumer. Restarting or Unregister does not erase a published contract. A former Stream-capable Type retains its fingerprint if DTOs and bindings are unchanged; renaming the Go proxy struct alone does not require a new Type. See the [contract reference](../../docs/contract.md).
 
