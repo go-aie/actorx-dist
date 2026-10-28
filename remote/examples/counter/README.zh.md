@@ -4,8 +4,6 @@
 
 独立 Python provider 注册 `demo.counter`，consumer 通过 HTTP 发送增量并获得累计值，Go gateway 借助内部 actorx-dist/NATS 按需创建代理。provider 和 consumer 只需要 gateway URL 与同一个 API Key，不监听端口、不安装 NATS 客户端。
 
-本例与 [Go Counter](../../../examples/counter/README.zh.md) 使用相同的计数业务，展示 Python provider 与 HTTP consumer 的接入方式。Go 示例每轮用 Send 加 2、Call 加 3；本例每次用 Call 加 5。Type 使用 `demo.counter`，与 Go 示例的 `counter` 区分：两者 wire 契约不同，调用端不能直接互换。
-
 ## 运行
 
 需要 Go 1.27、Python 3.11+ 和支持 JetStream 的 `nats-server`。以下命令均从 actorx-dist 仓库根目录执行。

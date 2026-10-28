@@ -8,32 +8,41 @@ Remote 让不同语言编写的应用通过 HTTP 调用有状态 Actor：Call �
 
 ## 架构与数据流
 
-Consumer 应用通过 Remote SDK 发起 Call 或消费 Stream；provider 应用通过 SDK 注册 Actor Type 并运行自己的业务 Actor。Gateway 连接两端，负责路由和消息转发。
+Consumer 应用通过 Remote SDK 发起 Call 或消费 Stream；provider 应用通过 SDK 注册 Actor Type 并运行自己的业务 Actor。Gateway 连接两端，通过 actorx-dist 完成路由与激活。
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph consumer["Consumer 应用"]
         C["Remote SDK"]
     end
     subgraph backend["Gateway 服务"]
-        G["Remote Gateway"]
-        D["actorx-dist Runtime"]
-        G -.->|路由与激活| D
+        G["Remote Gateway<br/>基于 actorx-dist Runtime"]
     end
     subgraph provider["Provider 应用"]
         P["Remote SDK"]
         A["业务 Actor"]
-        P -->|调用| A
-        A -->|结果 / 分片| P
     end
-    P -->|"1. 注册<br/>HTTP POST"| G
-    C -->|"2. Call / Stream<br/>HTTP POST"| G
-    G -->|"3. 创建 / 调用<br/>SSE"| P
-    P -->|"4. 结果 / 分片<br/>HTTP POST"| G
-    G -->|"5. 结果：JSON<br/>流式回复：SSE"| C
+
+    C -->|"2 Call / Stream<br/>HTTP POST"| G
+    G -->|"3 创建 / 调用<br/>SSE"| P
+    P <-->|"调用 / 结果"| A
+    G -->|"5 结果 / 分片<br/>JSON / SSE"| C
+    P -->|"1 注册<br/>HTTP POST"| G
+    P -->|"4 结果 / 分片<br/>HTTP POST"| G
+
+    classDef sdk fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a
+    classDef gateway fill:#ecfdf5,stroke:#34d399,color:#065f46
+    classDef actor fill:#f5f3ff,stroke:#a78bfa,color:#5b21b6
+    class C,P sdk
+    class G gateway
+    class A actor
+    style consumer fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    style backend fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    style provider fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    linkStyle default stroke:#64748b
 ```
 
-数据流：
+图中编号对应以下步骤：
 
 1. **注册**：Provider 注册 Actor Type，并保持注册请求的 SSE 响应连接。
 2. **请求**：Consumer 按 Type 和 ID 寻址，发起 Call 或 Stream。
@@ -43,7 +52,7 @@ flowchart LR
 
 补充说明：
 
-- 实线箭头表示消息方向。两端都主动连接 gateway；provider 沿已建立的注册 SSE 连接接收调用，无需监听入站端口。
+- 箭头表示消息方向。两端都主动连接 gateway；provider 沿已建立的注册 SSE 连接接收调用，无需监听入站端口。
 - Stream 的消费确认与取消也经由 gateway 转发，图中省略了这两类控制流。
 
 ## 运行示例
@@ -52,7 +61,7 @@ flowchart LR
 
 | 示例 | 学习内容 |
 | --- | --- |
-| [Counter](examples/counter/README.zh.md) | 对照 Go Counter：注册 Python provider，通过 Call 累加，观察状态保留与不同 ID 的独立状态。 |
+| [Counter](examples/counter/README.zh.md) | 注册 Python provider，通过 Call 累加计数，观察状态保留与不同 ID 的独立状态。 |
 | [Chat](examples/chat/README.zh.md) | 逐段消费 Stream，通过慢消费观察背压。 |
 
 ## 使用指南与参考

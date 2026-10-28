@@ -4,8 +4,6 @@ English | [中文](README.zh.md)
 
 An independent Python provider registers `demo.counter`. A consumer sends an increment over HTTP and receives the new total. The Go gateway uses internal actorx-dist/NATS services to activate proxies on demand. The provider and consumer need only the gateway URL and a shared API Key. Neither listens on a port or installs a NATS client.
 
-This uses the same counting behavior as the [Go Counter](../../../examples/counter/README.md), with a Python provider and HTTP consumer. The Go example uses Send to add 2 and Call to add 3 per round; this example uses Call to add 5 each time. The Type is `demo.counter`, separate from the Go example's `counter`: their wire contracts differ, so their clients are not interchangeable.
-
 ## Run
 
 Requires Go 1.27, Python 3.11+, and a `nats-server` with JetStream support. Run all commands below from the actorx-dist repository root.

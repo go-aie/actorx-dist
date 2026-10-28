@@ -8,32 +8,41 @@ The implementation provides a Go gateway and a Python SDK installed from source.
 
 ## Architecture and data flow
 
-A consumer application uses the Remote SDK to make Calls or consume Streams. A provider application uses the SDK to register Actor Types and run business Actors. The gateway connects the two sides and routes their messages.
+A consumer application uses the Remote SDK to make Calls or consume Streams. A provider application uses the SDK to register Actor Types and run business Actors. The gateway connects the two sides and uses actorx-dist for routing and activation.
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph consumer["Consumer application"]
         C["Remote SDK"]
     end
     subgraph backend["Gateway service"]
-        G["Remote Gateway"]
-        D["actorx-dist Runtime"]
-        G -.->|Routing and activation| D
+        G["Remote Gateway<br/>uses actorx-dist Runtime"]
     end
     subgraph provider["Provider application"]
         P["Remote SDK"]
         A["Business Actor"]
-        P -->|Invoke| A
-        A -->|Result / chunks| P
     end
-    P -->|"1. Register<br/>HTTP POST"| G
-    C -->|"2. Call / Stream<br/>HTTP POST"| G
-    G -->|"3. Create / Invoke<br/>SSE"| P
-    P -->|"4. Result / chunks<br/>HTTP POST"| G
-    G -->|"5. Result: JSON<br/>Stream: SSE"| C
+
+    C -->|"2 Call / Stream<br/>HTTP POST"| G
+    G -->|"3 Create / Invoke<br/>SSE"| P
+    P <-->|"Invoke / results"| A
+    G -->|"5 Results / chunks<br/>JSON / SSE"| C
+    P -->|"1 Register<br/>HTTP POST"| G
+    P -->|"4 Results / chunks<br/>HTTP POST"| G
+
+    classDef sdk fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a
+    classDef gateway fill:#ecfdf5,stroke:#34d399,color:#065f46
+    classDef actor fill:#f5f3ff,stroke:#a78bfa,color:#5b21b6
+    class C,P sdk
+    class G gateway
+    class A actor
+    style consumer fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    style backend fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    style provider fill:#f8fafc,stroke:#cbd5e1,color:#334155
+    linkStyle default stroke:#64748b
 ```
 
-Data flow:
+The diagram's numbers match the steps below:
 
 1. **Register**: The provider registers an Actor Type and keeps the registration's SSE response open.
 2. **Request**: The consumer addresses that Type and an ID to initiate a Call or Stream.
@@ -43,7 +52,7 @@ Data flow:
 
 Additional notes:
 
-- Solid arrows show message direction. Both sides initiate connections to the gateway; the provider receives calls over its existing registration SSE connection and needs no inbound listener.
+- Arrows show message direction. Both sides initiate connections to the gateway; the provider receives calls over its existing registration SSE connection and needs no inbound listener.
 - Stream consumption acknowledgments and cancellation pass through the gateway and are omitted from the diagram.
 
 ## Run an example
@@ -52,7 +61,7 @@ Start with Counter, then try Chat for incremental replies. Each example includes
 
 | Example | What you will learn |
 | --- | --- |
-| [Counter](examples/counter/README.md) | Compare with the Go Counter: register a Python provider, add through Call, and observe retained totals and independent state by ID. |
+| [Counter](examples/counter/README.md) | Register a Python provider, increment a counter through Call, and observe retained totals and independent state by ID. |
 | [Chat](examples/chat/README.md) | Consume a Stream incrementally and observe backpressure with a slow consumer. |
 
 ## Guides and reference

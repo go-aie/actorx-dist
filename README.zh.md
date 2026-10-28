@@ -2,13 +2,13 @@
 
 [English](README.md) | 中文
 
-Actorx Distributed（Go 包名 `actorxdist`）是一个基于 [actorx](https://github.com/go-aie/actorx/blob/main/README.zh.md) 的 Go 分布式 Actor 框架，支持逻辑寻址、按需激活、唯一归属、跨进程 Send/Call/Stream，以及停止和完整退出管理。
+Actorx Distributed 是一个基于 [Actorx](https://github.com/go-aie/actorx/blob/main/README.zh.md) 和 [NATS](https://nats.io/) 的 Go 分布式 Actor 框架，支持按类型和业务 ID 跨进程访问有状态 Actor，并在首次调用时按需创建实例。
 
-业务沿用 actorx 的有状态对象、串行消息处理、异步任务和流式结果。actorx-dist 通过 NATS 与 JetStream KV 管理通信和归属，让调用方按类型和业务 ID 访问对象。
+Actorx 负责进程内的 Actor 执行，NATS 负责跨进程通信，JetStream KV 协调实例归属。Actor 支持 Send、Call 和 Stream，分别用于单向消息、请求响应和流式结果。
 
 ## 开始使用
 
-以跨进程计数器为例：Actor 保存计数，收到 Add 消息后累加并返回结果。
+以跨进程计数器为例：Actor 保存计数，收到 Add 消息后累加并返回结果。以下代码展示主要用法；包含生成绑定、错误处理和退出流程的完整可运行程序见 [Counter 示例](examples/counter/README.zh.md)。
 
 ```go
 import (
@@ -38,7 +38,7 @@ var CounterSpec = actorxdist.ActorSpec[*Counter]{
 }
 ```
 
-Counter 定义业务行为，CounterSpec 声明逻辑类型和构造函数。工作进程注册 Spec，并保持运行以处理后续请求；退出时 Runtime.Close 统一撤销注册并等待实例收尾。下面省略常规错误处理及等待退出的代码：
+`Counter` 定义业务行为，`CounterSpec` 声明类型和构造函数。工作进程注册后保持运行以处理请求，退出时由 `Runtime.Close` 统一撤销注册并等待 Actor 退出：
 
 ```go
 ctx := context.Background()
@@ -47,7 +47,7 @@ defer worker.Close(ctx)
 _, _ = worker.Register(ctx, CounterSpec)
 ```
 
-另一个调用进程创建自己的 Runtime，无需注册 Actor。以下假设已取得请求上下文 ctx，且目标 ID 尚未使用：
+另一个调用进程创建自己的 Runtime，无需注册 Actor，直接按类型和 ID 调用计数器：
 
 ```go
 client, _ := actorxdist.NewRuntime(ctx)
@@ -55,68 +55,57 @@ defer client.Close(ctx)
 
 addr, _ := client.Addr("counter", "orders-42")
 n, _ := addr.Call[int](ctx, Add{N: 5})
-fmt.Println(n) // 5
+fmt.Println(n) // 新计数器输出 5
 ```
 
-`Addr("counter", "orders-42")` 只取得逻辑地址；首次调用才查找或激活对象，框架保证同一逻辑身份的唯一归属。地址选定一次激活后始终固定该代；实例退出后，使用新地址选择下一代。
-
-Actor 内寻址使用 `actorxdist.MustFrom(ctx).Addr(type, id)`，Self 可取得当前代回信地址，详见[核心概念](docs/concepts.zh.md)。上述代码需要生成 Bindings；完整定义、绑定和进程入口见 [Counter 示例](examples/counter/README.zh.md)。
+`Addr("counter", "orders-42")` 只创建逻辑地址，不会启动 Actor。首次 Send、Call 或 Stream 才查找或激活实例，框架保证同一类型和 ID 的唯一归属。
 
 ## 实际运行
 
-需要 Go 1.27。从 actorx-dist 仓库根目录运行；go.mod 已固定发布的 actorx 核心版本。
+需要 Go 1.27 和 [NATS Server v2.10.18](https://github.com/nats-io/nats-server/releases/tag/v2.10.18)。安装适合自己平台的服务端，并确保 `nats-server` 在 PATH 中。以下命令均从 actorx-dist 仓库根目录运行。
 
 ### 启动 NATS
 
-先从 [NATS 官方 v2.10.18 发布页](https://github.com/nats-io/nats-server/releases/tag/v2.10.18)下载适合系统和架构的压缩包。以下以 macOS Apple Silicon 为例，下载、解压并将可执行文件加入当前终端 PATH；其他平台在同一发布页选择对应包：
-
-```sh
-curl -fL -o /tmp/nats-server.tar.gz \
-  https://github.com/nats-io/nats-server/releases/download/v2.10.18/nats-server-v2.10.18-darwin-arm64.tar.gz
-tar -xzf /tmp/nats-server.tar.gz -C /tmp
-export PATH="/tmp/nats-server-v2.10.18-darwin-arm64:$PATH"
-```
-
-在终端 1 中进入 actorx-dist 仓库根目录，启动开发服务。配置已开启 JetStream，监听本机 4222 端口；存储目录须可写：
+在终端 1 中使用开发配置启动 NATS，配置已开启 JetStream，监听本机 4222 端口：
 
 ```sh
 nats-server -c examples/nats.conf -sd /tmp/dist-counter
 ```
 
-保持终端 1 中的服务运行，后续示例共用这个 NATS 服务。
+保持该终端运行，供后续示例使用。
 
 ### 运行 Counter
 
-打开终端 2，进入 actorx-dist 仓库根目录并启动工作进程，等待输出 `Counter worker ready`：
+在终端 2 中启动工作进程，等待输出 `Counter worker ready`：
 
 ```sh
 go run ./examples/counter -role worker
 ```
 
-打开终端 3，同样进入 actorx-dist 仓库根目录并运行调用方：
+在终端 3 中运行调用方：
 
 ```sh
 go run ./examples/counter -role client -id orders-42
 ```
 
-首次使用该 ID 时，输出：
+使用新的计数器 ID 时，输出：
 
 ```text
 5
 10
 ```
 
-client 每轮先 Send 增加 2，再 Call 增加 3 并返回累计值，共执行两轮。同一 worker 仍存活时，在终端 3 再次运行相同命令，输出 15、20：调用进程虽然退出，远端 Counter 的状态仍保存在 worker 中。
+调用方共执行两轮，每轮先 Send 增加 2，再 Call 增加 3 并返回累计值。保持同一工作进程运行，再次执行调用命令会输出 15、20：调用进程退出后，计数器的状态仍保存在工作进程中。
 
 ### 关闭程序
 
-client 完成调用后自动退出，不会停止远端 Counter。结束示例时，在终端 2 按 Ctrl-C，等待 worker 关闭并完成所属实例的退出；最后在终端 1 按 Ctrl-C 关闭 NATS。
+调用方完成后自动退出，不会停止计数器。结束示例时，在终端 2 按 Ctrl-C，等待工作进程及其 Actor 退出，再在终端 1 按 Ctrl-C 关闭 NATS。
 
-状态保存在 worker 内存中，实例退出后不保留。失联时没有自动接管，强制退出后的归属恢复见[部署指南](docs/deployment.zh.md#显式恢复与存储修复)。
+状态保存在工作进程内存中，实例退出后不保留。失联时没有自动接管，强制退出后的归属恢复见[部署指南](docs/deployment.zh.md#显式恢复与存储修复)。
 
-### 更多示例
+## 更多示例
 
-继续尝试前，保持或重新启动上述 NATS 服务。各示例的 README 给出所需进程及命令：
+各示例共用上述 NATS 服务，README 中包含各自的运行步骤：
 
 | 示例 | 学习内容 |
 | --- | --- |
@@ -134,4 +123,4 @@ client 完成调用后自动退出，不会停止远端 Counter。结束示例�
 | [部署指南](docs/deployment.zh.md) | 配置、权限、契约升级与显式恢复。 |
 | [跨语言接入](remote/README.zh.md) | HTTP/SSE Call/Stream、Python provider/consumer 与 remote 协议。 |
 
-实现细节见[架构与核心接入](docs/architecture.zh.md)、[wire 契约与资源限制](docs/contract.zh.md)、[Registry 协议](docs/registry.zh.md)。真实发布版本消费、实际跨主机网络与复制配置尚未验证。
+实现细节见[架构](docs/architecture.zh.md)、[wire 契约与资源限制](docs/contract.zh.md)和 [Registry 协议](docs/registry.zh.md)。
