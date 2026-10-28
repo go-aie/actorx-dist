@@ -123,7 +123,7 @@ Factory 实例容量跟随 Types；Factory 任务及完成队列容量随有效�
 
 使用 errors.Is 判断框架及 context 错误，不解析诊断文字。远端任意业务 error 只还原文字，不保留自定义 Go 类型；框架/context 分类经下游包装继续保留，并携带最多四项来源。收到外层确定回复不抹去下游的不确定性。
 
-| dist 错误 | 含义 |
+| actorx-dist 错误 | 含义 |
 | --- | --- |
 | ErrTypeUnavailable | 没有响应类型激活请求的 Factory，不授权替换已有代 |
 | ErrNotActivated | 冷句柄控制未找到当前代 |

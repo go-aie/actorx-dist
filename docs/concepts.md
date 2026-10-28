@@ -2,7 +2,7 @@
 
 English | [中文](concepts.zh.md)
 
-Distinguish three things: **the logical object's identity, its current activation, and the generation an address targets**. Business code keeps actorx Actors, Bindings and serial handlers; dist adds addressing, on-demand activation and cross-process communication.
+Distinguish three things: **the logical object's identity, its current activation, and the generation an address targets**. Business code keeps actorx Actors, Bindings and serial handlers; actorx-dist adds addressing, on-demand activation and cross-process communication.
 
 ```text
 ActorKey (Type + ID, unchanged across generations)

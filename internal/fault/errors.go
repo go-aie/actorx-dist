@@ -1,4 +1,4 @@
-// Package fault shares sentinel identities between protocol codecs and dist.
+// Package fault shares sentinel identities between protocol codecs and actorx-dist.
 package fault
 
 import "errors"

@@ -56,7 +56,7 @@ func TestGatewayCallEvidence(t *testing.T) {
 					if err != nil || result.Failure == nil {
 						t.Error("business failure did not travel as Result with nil Go error")
 					}
-					return a, protocol.Result{}, actorx.ErrStopped // simulate loss of dist terminal
+					return a, protocol.Result{}, actorx.ErrStopped // simulate loss of actorx-dist terminal
 				}
 				if mode == "damaged_dto" {
 					result.Content = ""
@@ -306,7 +306,11 @@ func TestGatewayAdmissionAndErrorPrecedence(t *testing.T) {
 	g, r := fakeGateway(t, nil)
 	_ = r
 	past := int64(0)
-	request := protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage(`null`), DeadlineUnixMS: &past}
+	request := protocol.CallParams{
+		Address:        testAddress("one"),
+		Input:          json.RawMessage(`null`),
+		DeadlineUnixMS: &past,
+	}
 	_, err := g.Call(testCtx(t), request)
 	rpcCode(t, err, protocol.DeadlineExceeded)
 	request.DeadlineUnixMS = nil

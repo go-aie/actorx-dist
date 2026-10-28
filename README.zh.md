@@ -4,7 +4,7 @@
 
 Actorx Distributed（Go 包名 `actorxdist`）是一个基于 [actorx](https://github.com/go-aie/actorx/blob/main/README.zh.md) 的 Go 分布式 Actor 框架，支持逻辑寻址、按需激活、唯一归属、跨进程 Send/Call/Stream，以及停止和完整退出管理。
 
-业务沿用 actorx 的有状态对象、串行消息处理、异步任务和流式结果。dist 通过 NATS 与 JetStream KV 管理通信和归属，让调用方按类型和业务 ID 访问对象。
+业务沿用 actorx 的有状态对象、串行消息处理、异步任务和流式结果。actorx-dist 通过 NATS 与 JetStream KV 管理通信和归属，让调用方按类型和业务 ID 访问对象。
 
 ## 开始使用
 

@@ -4,7 +4,7 @@ English | [中文](README.zh.md)
 
 Actorx Distributed (Go package `actorxdist`) is a distributed Actor framework for Go built on [actorx](https://github.com/go-aie/actorx/blob/main/README.md). It provides logical addressing, on-demand activation, unique ownership, cross-process Send/Call/Stream, and lifecycle management through complete shutdown.
 
-Business code keeps actorx stateful objects, serial message handling, asynchronous tasks and streaming results. dist uses NATS and JetStream KV for communication and ownership so callers access objects by type and business ID.
+Business code keeps actorx stateful objects, serial message handling, asynchronous tasks and streaming results. actorx-dist uses NATS and JetStream KV for communication and ownership so callers access objects by type and business ID.
 
 ## Get started
 

@@ -2,13 +2,13 @@
 
 English | [中文](architecture.zh.md)
 
-actorx owns local mailboxes, serial execution, tasks and complete exit. dist owns logical identity, ownership, networking and terminal evidence. The core depends only on the standard library; dist depends on core and the NATS SDK and integrates through public APIs.
+actorx owns local mailboxes, serial execution, tasks and complete exit. actorx-dist owns logical identity, ownership, networking and terminal evidence. The core depends only on the standard library; actorx-dist depends on core and the NATS SDK and integrates through public APIs.
 
 ## Components and resource ownership
 
 ```mermaid
 flowchart LR
-    R[dist Runtime / resource ledger] --> N[NATS connection / bounded dispatch]
+    R[actorx-dist Runtime / resource ledger] --> N[NATS connection / bounded dispatch]
     R --> M[Management actorx.Runtime]
     M --> F[One Factory Actor per Type]
     F --> T[StartTask / New and Spawn]
@@ -22,7 +22,7 @@ flowchart LR
 
 | Component | Responsibility |
 | --- | --- |
-| dist Runtime | Exclusively owns the connection, execution engines, bounded work budgets and resource ledger; pure callers have no management engine |
+| actorx-dist Runtime | Exclusively owns the connection, execution engines, bounded work budgets and resource ledger; pure callers have no management engine |
 | Factory Actor | One per declared Type; serial activation, construction deduplication and stop progress; no business key or Self |
 | Registry | Ordinary Go component providing bounded KV I/O; no mailbox, object construction or second management queue |
 | Business engine | Runs logical Actors and ctx.Spawn descendants; provides public Stop/Wait exit evidence |
@@ -45,11 +45,11 @@ type ContextFactory func(Actor) (ContextWrapper, error)
 func WithContextFactory(ContextFactory) Option
 ```
 
-dist installs ContextFactory on the business engine; management keeps pure core Context. Core binds one wrapper per instance after valid Bindings and before Channel.Bind/Started. The wrapper embeds each fresh core Context and captures the owning Runtime and optional Self. It performs no I/O, business calls or repeated Bindings reads. NewRuntime and static Describe do not run the context factory.
+actorx-dist installs ContextFactory on the business engine; management keeps pure core Context. Core binds one wrapper per instance after valid Bindings and before Channel.Bind/Started. The wrapper embeds each fresh core Context and captures the owning Runtime and optional Self. It performs no I/O, business calls or repeated Bindings reads. NewRuntime and static Describe do not run the context factory.
 
-WithContext(parent) wraps a fresh core Context with the same wrapper, retaining capability and fixed identity even with Background as the new parent. dist overrides neither Spawn nor WithContext. Local descendants gain addressing but no logical Self; see [concepts](concepts.md). Core validates retention of the current execution Context and rolls invalid wrappers back under core setup/lifecycle rules. Its partly sealed Context interface requires embedding a valid framework Context.
+WithContext(parent) wraps a fresh core Context with the same wrapper, retaining capability and fixed identity even with Background as the new parent. actorx-dist overrides neither Spawn nor WithContext. Local descendants gain addressing but no logical Self; see [concepts](concepts.md). Core validates retention of the current execution Context and rolls invalid wrappers back under core setup/lifecycle rules. Its partly sealed Context interface requires embedding a valid framework Context.
 
-Public LocalChannel.Deliver/Responder capabilities reuse core admission, Deferred, completion and cancellation. dist neither accesses private execution structures nor copies local request state machines. WithInstanceLimit reserves before Bindings and releases after complete exit, so ctx.Spawn cannot bypass the business engine's instance limit.
+Public LocalChannel.Deliver/Responder capabilities reuse core admission, Deferred, completion and cancellation. actorx-dist neither accesses private execution structures nor copies local request state machines. WithInstanceLimit reserves before Bindings and releases after complete exit, so ctx.Spawn cannot bypass the business engine's instance limit.
 
 ## Activation and business paths
 

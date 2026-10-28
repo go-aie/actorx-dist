@@ -2,7 +2,7 @@
 
 [English](concepts.md) | 中文
 
-理解 dist 先区分三件事：**逻辑对象是谁、当前运行哪一次激活、手里的地址指向哪一代**。业务仍使用 actorx 的普通 Actor、Bindings 和串行 handler；dist 增加寻址、按需激活与跨进程通信。
+理解 actorx-dist 先区分三件事：**逻辑对象是谁、当前运行哪一次激活、手里的地址指向哪一代**。业务仍使用 actorx 的普通 Actor、Bindings 和串行 handler；actorx-dist 增加寻址、按需激活与跨进程通信。
 
 ```text
 ActorKey（Type + ID，跨代不变）

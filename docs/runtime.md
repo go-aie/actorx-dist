@@ -123,7 +123,7 @@ Factory instance capacity follows Types. Factory task/completion capacity grows 
 
 Use errors.Is for framework and context errors rather than parsing diagnostics. Remote arbitrary business errors retain text, not custom Go types. Framework/context classifications survive downstream wrapping with at most four source records. A definite outer response does not erase downstream uncertainty.
 
-| dist error | Meaning |
+| actorx-dist error | Meaning |
 | --- | --- |
 | ErrTypeUnavailable | No Factory responds to type activation; this does not authorize replacement of an existing generation |
 | ErrNotActivated | Cold control found no current generation |

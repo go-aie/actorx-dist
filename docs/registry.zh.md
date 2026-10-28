@@ -78,4 +78,4 @@ READY 证明同步 Started 及订阅就绪，不证明异步业务就绪。普�
 
 运维顺序：暂停新增激活→检查用量及待提交代→扩容/修复或仅条件回收合格历史→原拥有者核实补交→确认 Wait/Close 和容量后恢复。原拥有者已死时先隔离进程/订阅，再按精确 key/generation/revision 恢复，拒绝过期请求。不合成缺失 Exit 或业务结果。
 
-来源：[固定 KV SDK](https://github.com/nats-io/nats.go/blob/v1.36.0/kv.go)、[固定 stream SDK](https://github.com/nats-io/nats.go/blob/v1.36.0/jsm.go)、[固定 server 配置](https://github.com/nats-io/nats-server/blob/v2.10.18/server/stream.go)。以上协议、资源选择及保守不明结果规则为 dist 的设计决策。
+来源：[固定 KV SDK](https://github.com/nats-io/nats.go/blob/v1.36.0/kv.go)、[固定 stream SDK](https://github.com/nats-io/nats.go/blob/v1.36.0/jsm.go)、[固定 server 配置](https://github.com/nats-io/nats-server/blob/v2.10.18/server/stream.go)。以上协议、资源选择及保守不明结果规则为 actorx-dist 的设计决策。

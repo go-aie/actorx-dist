@@ -2,13 +2,13 @@
 
 [English](architecture.md) | 中文
 
-actorx 管理本地 mailbox、串行执行、任务及完整退出；dist 管理逻辑身份、归属、网络和终态证据。核心只依赖标准库，dist 单向依赖核心及 NATS SDK，使用公共 API 接入。
+actorx 管理本地 mailbox、串行执行、任务及完整退出；actorx-dist 管理逻辑身份、归属、网络和终态证据。核心只依赖标准库，actorx-dist 单向依赖核心及 NATS SDK，使用公共 API 接入。
 
 ## 组件与资源归属
 
 ```mermaid
 flowchart LR
-    R[dist Runtime / 资源账本] --> N[NATS 连接 / 有界分派]
+    R[actorx-dist Runtime / 资源账本] --> N[NATS 连接 / 有界分派]
     R --> M[管理 actorx.Runtime]
     M --> F[每 Type 一个 Factory Actor]
     F --> T[StartTask / New 与 Spawn]
@@ -22,7 +22,7 @@ flowchart LR
 
 | 组件 | 责任 |
 | --- | --- |
-| dist Runtime | 独占连接，持有两个执行引擎、有界工作预算及资源账本；纯调用方没有管理引擎 |
+| actorx-dist Runtime | 独占连接，持有两个执行引擎、有界工作预算及资源账本；纯调用方没有管理引擎 |
 | Factory Actor | 每注册 Type 一个，串行维护激活、构造去重和停止进度；没有业务 key 或 Self |
 | Registry | 普通 Go 组件，封装有界 KV I/O；无 mailbox，不构造对象，不另建管理队列 |
 | 业务引擎 | 执行逻辑 Actor 及 ctx.Spawn 本地后代，提供公共 Stop/Wait 退出证据 |
@@ -45,9 +45,9 @@ type ContextFactory func(Actor) (ContextWrapper, error)
 func WithContextFactory(ContextFactory) Option
 ```
 
-dist 为业务引擎安装 ContextFactory；管理引擎保持纯核心 Context。核心在有效 Bindings 后、Channel.Bind/Started 前为每实例绑定一次 wrapper。wrapper 嵌入本次新的核心 Context，捕获所属 Runtime 和可选 Self，不做 I/O、不调用业务、不再读取业务 Bindings。NewRuntime 与静态 Describe 不执行上下文工厂。
+actorx-dist 为业务引擎安装 ContextFactory；管理引擎保持纯核心 Context。核心在有效 Bindings 后、Channel.Bind/Started 前为每实例绑定一次 wrapper。wrapper 嵌入本次新的核心 Context，捕获所属 Runtime 和可选 Self，不做 I/O、不调用业务、不再读取业务 Bindings。NewRuntime 与静态 Describe 不执行上下文工厂。
 
-WithContext(parent) 以同一 wrapper 包装新的核心 Context；即使新 parent 为 Background，也保留能力和固定身份。dist 不覆写 Spawn/WithContext。本地后代取得寻址能力但没有逻辑 Self，详见[核心概念](concepts.zh.md)。核心校验 wrapper 保留本次执行 Context，无效包装按核心设置错误及生命周期规则回滚；半封闭 Context 接口要求嵌入有效框架 Context。
+WithContext(parent) 以同一 wrapper 包装新的核心 Context；即使新 parent 为 Background，也保留能力和固定身份。actorx-dist 不覆写 Spawn/WithContext。本地后代取得寻址能力但没有逻辑 Self，详见[核心概念](concepts.zh.md)。核心校验 wrapper 保留本次执行 Context，无效包装按核心设置错误及生命周期规则回滚；半封闭 Context 接口要求嵌入有效框架 Context。
 
 本地投递通过公共 LocalChannel.Deliver/Responder 接缝复用核心受理、Deferred、完成与取消，不访问核心执行内部结构，不复制本地请求状态机。WithInstanceLimit 在 Bindings 前预留、完整退出后释放，ctx.Spawn 不绕过业务引擎实例上限。
 

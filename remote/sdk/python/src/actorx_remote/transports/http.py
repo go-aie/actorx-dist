@@ -16,12 +16,16 @@ from ..errors import AuthenticationError, ProtocolError, SessionError, Transport
 def check_status(response: httpx.Response, expected: int = 200) -> None:
     if response.status_code == expected:
         return
-    cls = {401: AuthenticationError, 403: SessionError}.get(response.status_code, TransportError)
+    cls = {401: AuthenticationError, 403: SessionError}.get(
+        response.status_code, TransportError
+    )
     raise cls("HTTP request rejected", status=response.status_code)
 
 
 def media_type(response: httpx.Response) -> str:
-    return cast(str, response.headers.get("content-type", "").split(";", 1)[0].strip().lower())
+    return cast(
+        str, response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    )
 
 
 async def read_body(response: httpx.Response) -> bytes:
@@ -41,7 +45,11 @@ async def frames(response: httpx.Response) -> AsyncIterator[bytes]:
         while b"\n\n" in pending:
             raw, _, tail = pending.partition(b"\n\n")
             pending[:] = tail
-            if not raw.startswith(b"data: ") or b"\n" in raw or len(raw) > p.MAX_BYTES + 6:
+            if (
+                not raw.startswith(b"data: ")
+                or b"\n" in raw
+                or len(raw) > p.MAX_BYTES + 6
+            ):
                 raise ProtocolError("Invalid SSE frame")
             yield bytes(raw[6:])
         if len(pending.rstrip(b"\n")) > p.MAX_BYTES + 6:
@@ -66,7 +74,9 @@ class HTTPTransport:
             or parsed.path not in ("", "/")
         ):
             raise ValueError("Expected gateway origin URL without credentials")
-        if not isinstance(api_key, str) or not re.fullmatch(r"[A-Za-z0-9._~+/-]+=*", api_key):
+        if not isinstance(api_key, str) or not re.fullmatch(
+            r"[A-Za-z0-9._~+/-]+=*", api_key
+        ):
             raise ValueError("Valid API key required")
 
         self._url = str(parsed).rstrip("/") + "/runtime/rpc"
@@ -75,7 +85,9 @@ class HTTPTransport:
             "Content-Type": "application/json",
             "X-Actorx-Remote-Protocol": p.VERSION,
         }
-        self._client = httpx.AsyncClient(timeout=None, follow_redirects=False, trust_env=False)
+        self._client = httpx.AsyncClient(
+            timeout=None, follow_redirects=False, trust_env=False
+        )
 
     @asynccontextmanager
     async def open(
