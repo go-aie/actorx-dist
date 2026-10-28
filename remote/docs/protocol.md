@@ -19,6 +19,8 @@ An object may implement either method or both; the operations share instance sta
 
 Both sides initiate connections to the gateway. Providers keep a registration SSE connection for creation, execution and stream control, posting results or chunks separately. They need no inbound listener.
 
+Each stage starts with an overview sequence diagram, followed by method definitions and JSON examples: [registration and discovery](#registration-and-discovery), [Call](#call-exchange), and [Stream](#stream-exchange). [Early cancellation](#actorcancel-cancel-early) has a separate diagram. Provider POSTs carry the session header; diagrams omit their HTTP 204 handoff acknowledgments unless shown explicitly.
+
 ## Transport and messages
 
 ### HTTP and authentication
@@ -94,6 +96,26 @@ Registration establishes the provider session without creating an Actor instance
 
 JSON below is indented for readability; actual SSE frames still encode each JSON message on one line as specified above. Addresses, tokens and deadlines are illustrative; real exchanges use selected addresses/tokens and calculated deadlines.
 
+## Registration and discovery
+
+Before serving Calls or Streams, the provider registers its Type and keeps the returned SSE connection open. The registration result supplies the session token for subsequent provider POSTs. Consumers may query the directory to discover registered Types; discovery is optional before a Call or Stream.
+
+```mermaid
+sequenceDiagram
+    participant C as Consumer
+    participant G as Gateway
+    participant P as Provider
+    P->>G: runtime/register (HTTP POST, accept SSE)
+    G-->>P: Registration result + session_token (registration SSE)
+    Note over G,P: Keep registration SSE open for creation, execution and control
+    opt Consumer queries the directory
+        C->>G: runtime/actors (HTTP POST)
+        G-->>C: Registered Actor Types (HTTP JSON)
+    end
+```
+
+Successful registration establishes a provider session, without constructing an instance or verifying its methods. A directory response is a snapshot of registrations, without reserving capacity or guaranteeing that a later request succeeds.
+
 ### runtime/register: register an Actor
 
 The provider registers the Actor it offers and establishes a connection for subsequent creation, invocation and stream control messages. Registration does not create an instance; the first Call or Stream creates one on demand.
@@ -160,7 +182,27 @@ The gateway returns the current Actor directory snapshot on that HTTP response:
 
 ## Call exchange
 
-The following follows a first Call in order. Ready instances skip `actor/create`. Consumer and provider use independent RPC IDs. Every provider response is posted with the session header; HTTP 204 acknowledges only that handoff.
+With the provider registered, the consumer starts a Call and waits on its original HTTP request. If activation is needed, the gateway selects a generation and creates the instance before invoking it. The diagram shows a successful exchange; method definitions below follow the same order.
+
+```mermaid
+sequenceDiagram
+    participant C as Consumer
+    participant G as Gateway
+    participant P as Provider
+    C->>G: actor/call, id=c:1 (HTTP POST)
+    opt Instance needs activation
+        G->>G: Select generation through actorx-dist
+        G-->>P: actor/create, id=g:create-1 (registration SSE)
+        P->>P: Construct and validate instance
+        P->>G: Create result, id=g:create-1 (HTTP POST)
+    end
+    G-->>P: actor/invoke, id=g:invoke-1 (registration SSE)
+    P->>P: Await handle(message)
+    P->>G: Result, id=g:invoke-1 (HTTP POST)
+    G-->>C: Result, id=c:1 (original HTTP JSON response)
+```
+
+Ready instances skip `actor/create`; creation failure prevents invocation. Consumer and provider use independent RPC IDs, correlated by the gateway. A successful Call returns a fixed address and one JSON value; business failure returns an error through the same path. HTTP 204 acknowledges only a provider POST handoff, while the Call result proves that this handler returned.
 
 ### actor/call: start a Call
 
@@ -292,7 +334,43 @@ The consumer saves generation for subsequent operations. `value` may also be nul
 
 ## Stream exchange
 
-The following follows a one-item Stream in order. First activation uses the same `actor/create` as Call; this example already has a selected generation. Each Stream yields zero or more chunks and exactly one result/error for the original request ID.
+With the provider registered, the consumer opens a Stream over SSE. The gateway first establishes stream control, then activates the instance if needed and invokes it. The diagram shows successful completion; the method examples below use a one-item Stream with an already selected generation.
+
+```mermaid
+sequenceDiagram
+    participant C as Consumer
+    participant G as Gateway
+    participant P as Provider
+    C->>G: actor/stream, id=c:2 (HTTP POST, accept SSE)
+    G-->>C: actor/stream_open (consumer SSE)
+    Note over C,G: Control is open, activation may still be pending
+    opt Instance needs activation
+        G->>G: Select generation through actorx-dist
+        G-->>P: actor/create (registration SSE)
+        P->>G: Create result (HTTP POST)
+    end
+    G-->>P: actor/invoke_stream, id=g:stream-1 (registration SSE)
+    P->>P: Iterate handle_stream(message)
+    par Provider segment
+        loop Zero or more chunks, within the provider window
+            P->>G: actor/chunk (HTTP POST)
+            G->>G: Proxy Write hands item to actorx-dist
+            G-->>P: actor/credit (registration SSE)
+        end
+        P->>G: Result + final_seq, id=g:stream-1 (HTTP POST)
+    and Consumer segment
+        loop Zero or more chunks, within the consumer window
+            G-->>C: actor/chunk (consumer SSE)
+            C->>C: Process item, then request the next
+            C->>G: actor/credit (HTTP POST)
+        end
+    end
+    G-->>C: Result + final_seq, id=c:2 (consumer SSE)
+```
+
+The two segments use independent IDs, tokens, sequences and credit ledgers. Their loops progress independently under bounded flow control; the provider terminal may arrive while the consumer segment is still draining. Provider credit follows a successful proxy Write into actorx-dist, without proving final consumer consumption. The provider must also wait for each upload's HTTP 204 before its next chunk or terminal; that handoff acknowledgment is separate from credit.
+
+`stream_open` has no address and does not prove activation or execution success. Each Stream produces zero or more chunks and one terminal result/error for the original request ID. Success waits for all consumer items to be acknowledged; an error may discard queued items. EOF without a valid terminal is not success. See [flow control and terminal results](#flow-control-and-terminal-results) for the exact rules.
 
 The gateway generates independent RPC IDs and stream tokens for the two segments and maps them. Tokens are canonical unpadded base64url encodings of 32 random bytes. Consumers receive neither the provider session token nor its stream token. The example distinguishes the segments as follows:
 
@@ -463,7 +541,27 @@ After the consumer segment's items are consumed, the gateway returns the origina
 
 ### actor/cancel: cancel early
 
-This is an early-exit alternative to normal completion. Consumer → gateway, one notification POST without a session header:
+Once stream control is open, the consumer can request early cancellation instead of continuing consumption. The diagram shows cancellation of an active provider execution; an already established terminal is retained.
+
+```mermaid
+sequenceDiagram
+    participant C as Consumer
+    participant G as Gateway
+    participant P as Provider
+    Note over C,P: Stream control is open, provider execution is active
+    C->>G: actor/cancel (HTTP POST, consumer ID/token)
+    par HTTP acknowledgment
+        G-->>C: HTTP 204 (handoff only)
+    and Execution cancellation
+        G-->>P: actor/cancel (registration SSE, provider ID/token)
+        P->>P: Request cancellation of this task
+    end
+    Note over C,P: Cancellation acknowledgment does not prove handler exit
+```
+
+Cancellation affects one Stream request and preserves the shared Actor and registration. The HTTP acknowledgment and cancellation propagation are independent; neither provides evidence that the handler has exited. The original Stream is settled under the [terminal and error rules](#flow-control-and-terminal-results); a late cancel never replaces a known terminal.
+
+Consumer → gateway, one notification POST without a session header:
 
 ```json
 {
