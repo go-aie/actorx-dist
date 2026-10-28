@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: 'off'
+
+jobs:
+  test:
+    name: Go
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted=$(git ls-files -z '*.go' | xargs -0 gofmt -l)
+          if [[ -n "$unformatted" ]]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Check generated code
+        run: |
+          go generate ./...
+          git diff --exit-code -- .
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test with race detector
+        run: go test -race -count=1 -timeout=5m ./...
+
+      - name: Test Python Remote SDK
+        run: |
+          python3 -m venv /tmp/actorx-remote-ci
+          /tmp/actorx-remote-ci/bin/python -m pip install ./remote/sdk/python
+          /tmp/actorx-remote-ci/bin/python -m unittest discover -s remote/sdk/python/tests -v

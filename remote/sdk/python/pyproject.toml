@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "actorx-remote"
+version = "0.1.0"
+description = "Minimal actorx.remote/v1 HTTP Call SDK"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27,<0.29"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+actorx_remote = ["py.typed"]
