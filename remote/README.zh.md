@@ -13,25 +13,25 @@ Consumer 应用中的业务代码通过 Remote SDK 发起 Call 或消费 Stream�
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 30, "padding": 14, "subGraphTitleMargin": {"top": 0, "bottom": 10}}}}%%
 flowchart TB
-    subgraph consumer["Consumer 应用"]
+    subgraph consumer["Consumer#160;应用"]
         B["业务调用方"]
-        C["Remote SDK"]
+        C["Remote#160;SDK"]
     end
-    subgraph backend["Gateway 服务"]
-        G["Remote Gateway"]
+    subgraph backend["Gateway#160;服务"]
+        G["Remote#160;Gateway"]
     end
-    subgraph provider["Provider 应用"]
-        P["Remote SDK"]
-        A["业务 Actor"]
+    subgraph provider["Provider#160;应用"]
+        P["Remote#160;SDK"]
+        A["业务#160;Actor"]
     end
 
-    B <-->|"调用 / 结果"| C
-    C -->|"2 请求<br/>HTTP POST"| G
-    G -->|"3 派发<br/>SSE"| P
-    P <-->|"调用 / 结果"| A
-    G -->|"5 返回<br/>JSON / SSE"| C
-    P -->|"1 注册<br/>HTTP POST"| G
-    P -->|"4 结果<br/>HTTP POST"| G
+    B <-->|"调用#160;/#160;结果"| C
+    C -->|"2#160;请求<br/>HTTP#160;POST"| G
+    G -->|"3#160;派发<br/>SSE"| P
+    P <-->|"调用#160;/#160;结果"| A
+    G -->|"5#160;返回<br/>JSON#160;/#160;SSE"| C
+    P -->|"1#160;注册<br/>HTTP#160;POST"| G
+    P -->|"4#160;结果<br/>HTTP#160;POST"| G
 
     classDef application fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a,font-size:18px
     classDef sdk fill:#f8fafc,stroke:#94a3b8,color:#475569,font-size:14px

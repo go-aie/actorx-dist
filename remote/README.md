@@ -13,25 +13,25 @@ Consumer application code uses the Remote SDK to make Calls or consume Streams. 
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 30, "padding": 14, "subGraphTitleMargin": {"top": 0, "bottom": 10}}}}%%
 flowchart TB
-    subgraph consumer["Consumer application"]
-        B["Application code"]
-        C["Remote SDK"]
+    subgraph consumer["Consumer#160;Application"]
+        B["Application#160;Code"]
+        C["Remote#160;SDK"]
     end
-    subgraph backend["Gateway service"]
-        G["Remote Gateway"]
+    subgraph backend["Gateway#160;Service"]
+        G["Remote#160;Gateway"]
     end
-    subgraph provider["Provider application"]
-        P["Remote SDK"]
-        A["Business Actor"]
+    subgraph provider["Provider#160;Application"]
+        P["Remote#160;SDK"]
+        A["Business#160;Actor"]
     end
 
-    B <-->|"Call / results"| C
-    C -->|"2 Request<br/>HTTP POST"| G
-    G -->|"3 Dispatch<br/>SSE"| P
-    P <-->|"Invoke / results"| A
-    G -->|"5 Response<br/>JSON / SSE"| C
-    P -->|"1 Register<br/>HTTP POST"| G
-    P -->|"4 Results<br/>HTTP POST"| G
+    B <-->|"Call#160;/#160;results"| C
+    C -->|"2#160;Request<br/>HTTP#160;POST"| G
+    G -->|"3#160;Dispatch<br/>SSE"| P
+    P <-->|"Invoke#160;/#160;results"| A
+    G -->|"5#160;Response<br/>JSON#160;/#160;SSE"| C
+    P -->|"1#160;Register<br/>HTTP#160;POST"| G
+    P -->|"4#160;Results<br/>HTTP#160;POST"| G
 
     classDef application fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a,font-size:18px
     classDef sdk fill:#f8fafc,stroke:#94a3b8,color:#475569,font-size:14px
