@@ -51,11 +51,11 @@ class ProtocolTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            vectors["services"],
+            vectors["actors"],
             p.success(
                 "list-1",
                 {
-                    "services": [
+                    "actors": [
                         {
                             "type": "demo.ping",
                             "description": "Ping/Pong provider",
@@ -65,6 +65,11 @@ class ProtocolTests(unittest.TestCase):
                 },
             ),
         )
+        unavailable = p.failure("c:2", 1002)
+        self.assertEqual(vectors["actor_unavailable"], unavailable)
+        error = p.remote_error(p.response(p.encode(unavailable), "c:2")["error"])
+        self.assertEqual(error.code, "actor_unavailable")
+        self.assertEqual(error.rpc_code, 1002)
         call = p.failure("c:1", 1013, actor_address=ADDRESS)
         self.assertEqual(vectors["call_unsupported"], call)
         stream = p.failure("s:1", 1013, actor_address=ADDRESS)
@@ -87,7 +92,7 @@ class ProtocolTests(unittest.TestCase):
         for text in ('"c:1"', "900719925474099312345", "1.234567890123456789", "null"):
             with self.subTest(text=text):
                 raw = (
-                    '{"jsonrpc":"2.0","id":' + text + ',"method":"runtime/services"}'
+                    '{"jsonrpc":"2.0","id":' + text + ',"method":"runtime/actors"}'
                 ).encode()
                 message = p.envelope(raw)
                 encoded = p.encode(p.success(message["id"], None))
@@ -101,7 +106,7 @@ class ProtocolTests(unittest.TestCase):
     def test_p0_method_vectors(self) -> None:
         vectors = [
             b'{"jsonrpc":"2.0","id":"p:register-1","method":"runtime/register","params":{"type":"demo.ping","description":"Ping/Pong provider"}}',
-            b'{"jsonrpc":"2.0","id":"list-1","method":"runtime/services"}',
+            b'{"jsonrpc":"2.0","id":"list-1","method":"runtime/actors"}',
             b'{"jsonrpc":"2.0","id":"c:1","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},"input":{"n":900719925474099312345},"deadline_unix_ms":1890000000000}}',
             p.encode(
                 p.request(

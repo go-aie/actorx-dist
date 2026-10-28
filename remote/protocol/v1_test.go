@@ -33,7 +33,7 @@ func TestV1WireVectors(t *testing.T) {
 		"registered": Success(json.RawMessage(`"p:register-1"`), RegistrationInfo{
 			Protocol: Version, Type: a.Type, SessionToken: "session-token",
 		}),
-		"services": Success(json.RawMessage(`"list-1"`), ServicesResult{Services: []Service{
+		"actors": Success(json.RawMessage(`"list-1"`), ActorsResult{Actors: []Actor{
 			{
 				Type:        a.Type,
 				Description: "Ping/Pong provider",
@@ -41,6 +41,7 @@ func TestV1WireVectors(t *testing.T) {
 			},
 		}}),
 		"call_unsupported":   ErrorResponse(json.RawMessage(`"c:1"`), NewError(UnsupportedOperation, Kind(UnsupportedOperation), &a)),
+		"actor_unavailable":  ErrorResponse(json.RawMessage(`"c:2"`), NewError(ActorUnavailable, Kind(ActorUnavailable), nil)),
 		"stream_unsupported": ErrorResponse(json.RawMessage(`"s:1"`), StreamError(NewError(UnsupportedOperation, Kind(UnsupportedOperation), &a), 0)),
 		"call_failure":       NewResult(nil, &Failure{Code: UnsupportedOperation, Message: Kind(UnsupportedOperation)}),
 		"invoke": Invoke{

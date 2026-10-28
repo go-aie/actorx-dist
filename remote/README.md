@@ -8,43 +8,48 @@ The implementation provides a Go gateway and a Python SDK installed from source.
 
 ## Architecture and data flow
 
-A consumer application uses the Remote SDK to make Calls or consume Streams. A provider application uses the SDK to register Actor Types and run business Actors. The gateway connects the two sides and uses actorx-dist for routing and activation.
+Consumer application code uses the Remote SDK to make Calls or consume Streams. A provider application uses the SDK to register Actors and run business Actors. The gateway connects the two sides and uses actorx-dist for routing and activation.
 
 ```mermaid
+%%{init: {"flowchart": {"rankSpacing": 30, "padding": 14, "subGraphTitleMargin": {"top": 0, "bottom": 10}}}}%%
 flowchart TB
     subgraph consumer["Consumer application"]
+        B["Application code"]
         C["Remote SDK"]
     end
     subgraph backend["Gateway service"]
-        G["Remote Gateway<br/>uses actorx-dist Runtime"]
+        G["Remote Gateway"]
     end
     subgraph provider["Provider application"]
         P["Remote SDK"]
         A["Business Actor"]
     end
 
-    C -->|"2 Call / Stream<br/>HTTP POST"| G
-    G -->|"3 Create / Invoke<br/>SSE"| P
+    B <-->|"Call / results"| C
+    C -->|"2 Request<br/>HTTP POST"| G
+    G -->|"3 Dispatch<br/>SSE"| P
     P <-->|"Invoke / results"| A
-    G -->|"5 Results / chunks<br/>JSON / SSE"| C
+    G -->|"5 Response<br/>JSON / SSE"| C
     P -->|"1 Register<br/>HTTP POST"| G
-    P -->|"4 Results / chunks<br/>HTTP POST"| G
+    P -->|"4 Results<br/>HTTP POST"| G
 
-    classDef sdk fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a
-    classDef gateway fill:#ecfdf5,stroke:#34d399,color:#065f46
-    classDef actor fill:#f5f3ff,stroke:#a78bfa,color:#5b21b6
+    classDef application fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a,font-size:18px
+    classDef sdk fill:#f8fafc,stroke:#94a3b8,color:#475569,font-size:14px
+    classDef gateway fill:#ecfdf5,stroke:#34d399,color:#065f46,font-size:16px
+    classDef actor fill:#f5f3ff,stroke:#a78bfa,color:#5b21b6,font-size:18px
+    class B application
     class C,P sdk
     class G gateway
     class A actor
     style consumer fill:#f8fafc,stroke:#cbd5e1,color:#334155
     style backend fill:#f8fafc,stroke:#cbd5e1,color:#334155
     style provider fill:#f8fafc,stroke:#cbd5e1,color:#334155
-    linkStyle default stroke:#64748b
+    linkStyle default stroke:#64748b,font-size:13px
 ```
 
 The diagram's numbers match the steps below:
 
-1. **Register**: The provider registers an Actor Type and keeps the registration's SSE response open.
+1. **Register**: The provider registers an Actor and keeps the registration's SSE response open.
 2. **Request**: The consumer addresses that Type and an ID to initiate a Call or Stream.
 3. **Dispatch**: The gateway uses actorx-dist to select the generation, creates the provider's business object on first use, then dispatches the operation.
 4. **Execute**: The provider runs the business logic and POSTs results or chunks back to the gateway.

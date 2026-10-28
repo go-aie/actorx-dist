@@ -55,7 +55,7 @@ The provider prints `Chat actor created` and `Chat turn 1` on the first request.
 
 ## Implementation
 
-[provider.py](provider.py) implements the `handle_stream(message)` async generator and uses `register(type, factory)`, just like Counter. Registration saves the factory; the first Stream creates the object. Six fragments exceed the four-item sending window. Slow consumption propagates backpressure through the gateway and actorx-dist.
+[provider.py](provider.py) implements the `handle_stream(message)` async generator and registers the Actor with `runtime.register(type, ChatActor)`, just like Counter. Registration does not create an instance; the first Stream for a new ID creates the object. Six fragments exceed the four-item sending window. Slow consumption propagates backpressure through the gateway and actorx-dist.
 
 [consumer.py](consumer.py) uses `async with actor.stream(...) as chunks` and `async for`. Exhaustion means an explicit terminal was received and all items were processed. Context exit after a break or exception, and Runtime shutdown, cancel unfinished streams. The default total deadline is five seconds; `timeout` accepts up to 60 seconds. This example uses 30 seconds.
 

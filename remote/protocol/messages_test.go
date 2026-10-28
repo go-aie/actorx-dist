@@ -11,7 +11,7 @@ const fixedAddress = `{"version":1,"type":"demo.ping","id":"session-42","generat
 
 func TestJSONRPCEnvelope(t *testing.T) {
 	for _, id := range []string{`"c:1"`, `900719925474099312345`, `1.234567890123456789`, `null`} {
-		m, e := ParseMessage([]byte(`{"jsonrpc":"2.0","id":` + id + `,"method":"runtime/services"}`))
+		m, e := ParseMessage([]byte(`{"jsonrpc":"2.0","id":` + id + `,"method":"runtime/actors"}`))
 		if e != nil || m.IsNotification() || string(m.ID) != id {
 			t.Fatalf("id %s: %+v %v", id, m, e)
 		}
@@ -61,7 +61,7 @@ func TestActorMethodVectors(t *testing.T) {
 			`{"jsonrpc":"2.0","id":"p:register-1","method":"runtime/register","params":{"type":"demo.ping","description":"Ping/Pong provider"}}`,
 			ToGateway,
 		},
-		{`{"jsonrpc":"2.0","id":"list-1","method":"runtime/services"}`, ToGateway},
+		{`{"jsonrpc":"2.0","id":"list-1","method":"runtime/actors"}`, ToGateway},
 		{
 			`{"jsonrpc":"2.0","id":"c:1","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},"input":{"n":900719925474099312345},"deadline_unix_ms":1890000000000}}`,
 			ToGateway,
@@ -93,8 +93,8 @@ func TestActorMethodVectors(t *testing.T) {
 		direction      Direction
 		code           int
 	}{
-		{Services, `[]`, ToGateway, InvalidParams},
-		{Services, `{"other":1}`, ToGateway, InvalidParams},
+		{Actors, `[]`, ToGateway, InvalidParams},
+		{Actors, `{"other":1}`, ToGateway, InvalidParams},
 		{Register, `{"Type":"demo.ping"}`, ToGateway, InvalidParams},
 		{Register, `{"type":null}`, ToGateway, InvalidParams},
 		{Register, `{"type":"INVALID"}`, ToGateway, InvalidParams},
@@ -114,8 +114,9 @@ func TestActorMethodVectors(t *testing.T) {
 			InvalidParams,
 		},
 		{InvokeMethod, `{"address":` + fixedAddress + `,"input":null}`, ToProvider, InvalidParams},
-		{Create, `{}`, ToGateway, MethodNotFound}, {Services, `{}`, ToProvider, MethodNotFound},
-		{"actor/unsupported", `{}`, ToGateway, MethodNotFound}, {"runtime.services", `{}`, ToGateway, MethodNotFound},
+		{Create, `{}`, ToGateway, MethodNotFound}, {Actors, `{}`, ToProvider, MethodNotFound},
+		{"actor/unsupported", `{}`, ToGateway, MethodNotFound}, {"runtime.actors", `{}`, ToGateway, MethodNotFound},
+		{"runtime/services", `{}`, ToGateway, MethodNotFound},
 	}
 	for _, tt := range cases {
 		m, err := NewRequest(tt.method, "test", json.RawMessage(tt.params))
@@ -140,7 +141,7 @@ func TestNotificationAndBatch(t *testing.T) {
 		if m.Method == Register {
 			return nil, NewError(TransportMode, "SSE required", nil)
 		}
-		return ServicesResult{Services: []Service{}}, nil
+		return ActorsResult{Actors: []Actor{}}, nil
 	}
 	tests := []struct {
 		raw   string
@@ -150,14 +151,14 @@ func TestNotificationAndBatch(t *testing.T) {
 		{`[]`, 0, `{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid Request"}}`},
 		{`[{"jsonrpc":"2.0","method":"unknown"}]`, 1, ``},
 		{
-			`[{"jsonrpc":"2.0","method":"runtime/services"},{"jsonrpc":"2.0","id":null,"method":"runtime/services"},1]`,
+			`[{"jsonrpc":"2.0","method":"runtime/actors"},{"jsonrpc":"2.0","id":null,"method":"runtime/actors"},1]`,
 			2,
-			`[{"jsonrpc":"2.0","id":null,"result":{"services":[]}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid_request"}}]`,
+			`[{"jsonrpc":"2.0","id":null,"result":{"actors":[]}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"invalid_request"}}]`,
 		},
 		{
-			`{"jsonrpc":"2.0","method":"runtime/services","id":900719925474099312345}`,
+			`{"jsonrpc":"2.0","method":"runtime/actors","id":900719925474099312345}`,
 			1,
-			`{"jsonrpc":"2.0","id":900719925474099312345,"result":{"services":[]}}`,
+			`{"jsonrpc":"2.0","id":900719925474099312345,"result":{"actors":[]}}`,
 		},
 	}
 	for _, tt := range tests {

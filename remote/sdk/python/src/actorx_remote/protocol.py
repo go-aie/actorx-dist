@@ -38,7 +38,7 @@ KINDS = dict(
         (
             "remote_error",
             "full",
-            "service_unavailable",
+            "actor_unavailable",
             "activation_unknown",
             "outcome_unknown",
             "deadline_exceeded",

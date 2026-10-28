@@ -1,4 +1,4 @@
-"""Register a Python Actor factory; the SDK owns its instances and replies."""
+"""Register a Python Actor; the SDK creates instances on demand and sends replies."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ async def main(args: argparse.Namespace) -> None:
         loop.add_signal_handler(sig, stop.set)
 
     async with Runtime(args.server, api_key=os.environ["REMOTE_API_KEY"]) as runtime:
-        # Registration publishes a factory; the first Stream creates an instance.
+        # Registration does not create an instance; the first Stream for a new ID does.
         await runtime.register(
             args.type, ChatActor, description="Python streaming chat"
         )

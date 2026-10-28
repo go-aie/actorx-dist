@@ -8,43 +8,48 @@ Remote 让不同语言编写的应用通过 HTTP 调用有状态 Actor：Call �
 
 ## 架构与数据流
 
-Consumer 应用通过 Remote SDK 发起 Call 或消费 Stream；provider 应用通过 SDK 注册 Actor Type 并运行自己的业务 Actor。Gateway 连接两端，通过 actorx-dist 完成路由与激活。
+Consumer 应用中的业务代码通过 Remote SDK 发起 Call 或消费 Stream；provider 应用通过 SDK 注册 Actor 并运行自己的业务 Actor。Gateway 连接两端，通过 actorx-dist 完成路由与激活。
 
 ```mermaid
+%%{init: {"flowchart": {"rankSpacing": 30, "padding": 14, "subGraphTitleMargin": {"top": 0, "bottom": 10}}}}%%
 flowchart TB
     subgraph consumer["Consumer 应用"]
+        B["业务调用方"]
         C["Remote SDK"]
     end
     subgraph backend["Gateway 服务"]
-        G["Remote Gateway<br/>基于 actorx-dist Runtime"]
+        G["Remote Gateway"]
     end
     subgraph provider["Provider 应用"]
         P["Remote SDK"]
         A["业务 Actor"]
     end
 
-    C -->|"2 Call / Stream<br/>HTTP POST"| G
-    G -->|"3 创建 / 调用<br/>SSE"| P
+    B <-->|"调用 / 结果"| C
+    C -->|"2 请求<br/>HTTP POST"| G
+    G -->|"3 派发<br/>SSE"| P
     P <-->|"调用 / 结果"| A
-    G -->|"5 结果 / 分片<br/>JSON / SSE"| C
+    G -->|"5 返回<br/>JSON / SSE"| C
     P -->|"1 注册<br/>HTTP POST"| G
-    P -->|"4 结果 / 分片<br/>HTTP POST"| G
+    P -->|"4 结果<br/>HTTP POST"| G
 
-    classDef sdk fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a
-    classDef gateway fill:#ecfdf5,stroke:#34d399,color:#065f46
-    classDef actor fill:#f5f3ff,stroke:#a78bfa,color:#5b21b6
+    classDef application fill:#eff6ff,stroke:#60a5fa,color:#1e3a8a,font-size:18px
+    classDef sdk fill:#f8fafc,stroke:#94a3b8,color:#475569,font-size:14px
+    classDef gateway fill:#ecfdf5,stroke:#34d399,color:#065f46,font-size:16px
+    classDef actor fill:#f5f3ff,stroke:#a78bfa,color:#5b21b6,font-size:18px
+    class B application
     class C,P sdk
     class G gateway
     class A actor
     style consumer fill:#f8fafc,stroke:#cbd5e1,color:#334155
     style backend fill:#f8fafc,stroke:#cbd5e1,color:#334155
     style provider fill:#f8fafc,stroke:#cbd5e1,color:#334155
-    linkStyle default stroke:#64748b
+    linkStyle default stroke:#64748b,font-size:13px
 ```
 
 图中编号对应以下步骤：
 
-1. **注册**：Provider 注册 Actor Type，并保持注册请求的 SSE 响应连接。
+1. **注册**：Provider 注册 Actor，并保持注册请求的 SSE 响应连接。
 2. **请求**：Consumer 按 Type 和 ID 寻址，发起 Call 或 Stream。
 3. **派发**：Gateway 通过 actorx-dist 选定代次，首次使用时在 provider 中创建业务对象，再发送调用。
 4. **执行**：Provider 执行业务，将结果或分片 POST 回 gateway。

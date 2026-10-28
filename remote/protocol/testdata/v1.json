@@ -1,7 +1,8 @@
 {
   "register": {"jsonrpc":"2.0","id":"p:register-1","method":"runtime/register","params":{"type":"demo.ping","description":"Ping/Pong provider"}},
   "registered": {"jsonrpc":"2.0","id":"p:register-1","result":{"protocol":"actorx.remote/v1","type":"demo.ping","session_token":"session-token"}},
-  "services": {"jsonrpc":"2.0","id":"list-1","result":{"services":[{"type":"demo.ping","description":"Ping/Pong provider","protocol":"actorx.remote/v1"}]}},
+  "actors": {"jsonrpc":"2.0","id":"list-1","result":{"actors":[{"type":"demo.ping","description":"Ping/Pong provider","protocol":"actorx.remote/v1"}]}},
+  "actor_unavailable": {"jsonrpc":"2.0","id":"c:2","error":{"code":1002,"message":"actor_unavailable","data":{"kind":"actor_unavailable"}}},
   "call_unsupported": {"jsonrpc":"2.0","id":"c:1","error":{"code":1013,"message":"unsupported_operation","data":{"kind":"unsupported_operation","address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"}}}},
   "stream_unsupported": {"jsonrpc":"2.0","id":"s:1","error":{"code":1013,"message":"unsupported_operation","data":{"address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"final_seq":0,"kind":"unsupported_operation"}}},
   "call_failure": {"message_type":"json","content_type":"application/json","content":"","failure":{"code":1013,"message":"unsupported_operation"}},

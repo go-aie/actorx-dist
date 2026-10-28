@@ -18,7 +18,7 @@ python3 -m venv /tmp/actorx-remote-demo-venv
 
 ## 一个 Actor，两种操作
 
-业务入口从 `actorx_remote` 导入。对象可实现 `handle`、`handle_stream` 中的一种或两种，统一用 `register(type, factory)` 注册。以下代码放在已建立的 Runtime 中；provider 和 consumer 可位于独立进程：
+业务入口从 `actorx_remote` 导入。Actor 可实现 `handle`、`handle_stream` 中的一种或两种；将类传给 `runtime.register` 即可注册，如下例所示。以下代码放在已建立的 Runtime 中；provider 和 consumer 可位于独立进程：
 
 ```python
 from actorx_remote import Runtime
@@ -49,7 +49,7 @@ async with actor.stream({"text": "hello"}, timeout=30) as chunks:
 
 首次 Call 返回 `turn: 1`，后续 Stream 的两项均带 `turn: 2`：两种操作复用同一代实例、锁和执行资源槽。不同 ID/generation 创建独立对象。Call 等待单个 JSON 值；Stream 消费零到多个 JSON 项及明确终态，SDK 不按返回值自动改换操作。
 
-工厂可以是类、同步函数或带配置的闭包，例如 `await runtime.register("demo.configured", lambda: ChatActor())`。注册只保存工厂并建立会话，不为探测方法提前构造对象。首次激活才要求真实对象至少有一个可调用的 `handle` / `handle_stream`；工厂失败或两者均不可调用时按创建失败返回 1000。
+注册只建立会话，不创建 Actor 实例或探测对象方法。首次 Call 或 Stream 访问新 ID 时，SDK 才创建对应对象。真实对象必须至少有一个可调用的 `handle` / `handle_stream`；创建失败或两者均不可调用时返回 1000。
 
 执行时在实例锁内检查对应方法。`handle(message)` 必须返回可 await 的结果并产出一个 JSON 值；`handle_stream(message)` 必须直接返回异步迭代器，支持异步生成器和自定义异步迭代器。已调用方法但返回形态非法、输出非 JSON 或业务抛异常时返回 1000。
 
@@ -58,7 +58,7 @@ async with actor.stream({"text": "hello"}, timeout=30) as chunks:
 | API | 行为 |
 | --- | --- |
 | `Runtime(url, api_key=..., transport="http")` | URL 为 gateway 的 HTTP/HTTPS origin。每个 POST 自动携带 Bearer Key 和 v1 协议 Header；不跟随重定向、不重试。支持 `async with` |
-| `await runtime.register(type, factory, description="")` | 保存无参同步工厂；注册就绪后返回，此时尚未创建对象。没有 `stream` 参数 |
+| `await runtime.register(type, factory, description="")` | 注册 Actor；`factory` 用于创建对象。注册就绪后返回，此时尚未创建实例。没有 `stream` 参数 |
 | `runtime.addr(type, id)` | 创建本地 `Addr`，不做网络 I/O |
 | `await addr.call(message)` | 五秒总预算；首次返回或有效错误中的选代地址保存到句柄，后续固定该代次 |
 | `addr.stream(message, timeout=5)` | 返回流 context，期限接受 (0, 60] 秒；通过 `async with` 和 `async for` 消费 |
@@ -66,7 +66,9 @@ async with actor.stream({"text": "hello"}, timeout=30) as chunks:
 | `await runtime.wait_closed()` | 等待运行结束；provider 流异常会关闭 Runtime 并向等待者抛出原因 |
 | `await runtime.close()` | 幂等关闭 SSE、取消并汇合 SDK 任务、释放对象；上下文退出自动调用 |
 
-消息与返回值必须为 JSON 数据；支持 null、大整数，分数解码为 `decimal.Decimal` 以保留精度，编码同时接受有限的 Python float 和 Decimal。不能传任意 Python 对象。factory 必须短时同步返回，异步 handler 必须配合取消。
+对 provider 作者，注册的第二个参数 `factory` 是用于创建 Actor 对象的无参同步可调用对象。可直接传入能无参构造的类，如 `runtime.register("demo.chat", ChatActor)`；需要自定义创建时，也可传入函数或闭包，如 `runtime.register("demo.configured", lambda: ChatActor())`。SDK 仅在需要实例时调用它，它必须短时同步返回。这是 Python SDK 的对象创建接口，远程协议不传输工厂。
+
+消息与返回值必须为 JSON 数据；支持 null、大整数，分数解码为 `decimal.Decimal` 以保留精度，编码同时接受有限的 Python float 和 Decimal。不能传任意 Python 对象。异步 handler 必须配合取消。
 
 同一入口导出 `JSONValue`、`Actor`、`StreamActor`、`ActorFactory` 和 `Address`。`JSONValue` 表示递归 JSON 数据，包含 Decimal；`Actor` / `StreamActor` 是静态类型辅助 Protocol，分别描述返回 `Awaitable[JSONValue]` 的 `handle` 和返回 `AsyncIterator[JSONValue]` 的 `handle_stream`。无需继承，不划分注册或对象生命周期。`ActorFactory` 是无参同步工厂；`Address` 是 TypedDict，generation 可省略。包包含 `py.typed`，供类型检查器读取内联注解。
 
@@ -92,7 +94,7 @@ except UnsupportedOperationError as exc:
 count = await actor.call({"n": 5})  # 原 Addr、同一代实例
 ```
 
-缺少地址或矛盾的 Stream 终态不能作为可信 1013，按 1004 处理。1013 与工厂/业务失败 1000、未知 JSON-RPC 方法 -32601 分别处理。
+缺少地址或矛盾的 Stream 终态不能作为可信 1013，按 1004 处理。1013 与实例创建或业务失败 1000、未知 JSON-RPC 方法 -32601 分别处理。
 
 首次 Call 或 Stream 可能已受理却缺少有效选代证据时，本次返回结果不明，句柄进入不明状态；后续操作抛本地 `AddressUncertainError`。调用者需要显式重新取句柄才可能重新选代，这不会对之前的工作去重。认证、参数拒绝和确定的建连失败不污染句柄；固定地址永不因错误自动换代。错误消息使用固定诊断，不转发用户异常堆栈或服务端原始诊断。
 
@@ -102,7 +104,7 @@ count = await actor.call({"n": 5})  # 原 Addr、同一代实例
 
 提前 `break` 必须退出 context 或显式 `await chunks.aclose()`，关闭发送取消并回收任务；Runtime 关闭也负责回收。取消不停止共享 Actor，不证明外部副作用已结束；SDK 在 handler 实际退出前保留实例锁和执行槽。不要只依赖垃圾回收结束流。
 
-纯 Call consumer 不建立 SSE；每个 Stream consumer 建立独立 SSE。provider 断线不重连；同一 Runtime 可以注册并调用服务。当前没有 Send、WS 或 Call 的远端取消 API。Stream 支持按请求取消。
+纯 Call consumer 不建立 SSE；每个 Stream consumer 建立独立 SSE。provider 断线不重连；同一 Runtime 可以注册并调用 Actor。当前没有 Send、WS 或 Call 的远端取消 API。Stream 支持按请求取消。
 
 ## 版本迁移与参考
 

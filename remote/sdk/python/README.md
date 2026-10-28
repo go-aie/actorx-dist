@@ -18,7 +18,7 @@ A successful unittest run prints `OK`. These tests use controlled HTTP transport
 
 ## One Actor, two operations
 
-Import the public API from `actorx_remote`. An object may implement `handle`, `handle_stream`, or both; every Actor uses `register(type, factory)`. The following runs inside existing Runtimes; provider and consumer can be separate processes:
+Import the public API from `actorx_remote`. An Actor may implement `handle`, `handle_stream`, or both. Register it by passing its class to `runtime.register`, as shown below. The following runs inside existing Runtimes; provider and consumer can be separate processes:
 
 ```python
 from actorx_remote import Runtime
@@ -49,7 +49,7 @@ async with actor.stream({"text": "hello"}, timeout=30) as chunks:
 
 The first Call returns `turn: 1`; both subsequent Stream items carry `turn: 2`. Both operations reuse the same generation's object, lock and execution slot. Different IDs/generations create independent objects. Call waits for one JSON value; Stream consumes zero or more JSON items and an explicit terminal. The SDK does not switch operations based on return values.
 
-Factories may be classes, synchronous functions or configured closures, such as `await runtime.register("demo.configured", lambda: ChatActor())`. Registration saves the factory and establishes a session without constructing an object to probe its methods. First activation requires the actual object to have at least one callable `handle` / `handle_stream`; factory failure or neither method being callable produces creation failure 1000.
+Registration establishes a session without creating an Actor instance or probing its methods. On the first Call or Stream for a new ID, the SDK creates the corresponding object. It must have at least one callable `handle` / `handle_stream`; creation failure or neither method being callable produces error 1000.
 
 The requested method is checked under the instance lock. `handle(message)` must return an awaitable producing one JSON value; `handle_stream(message)` must directly return an async iterator, including async generators and custom async iterators. Invalid return shapes, non-JSON output and business exceptions after invocation produce 1000.
 
@@ -58,7 +58,7 @@ The requested method is checked under the instance lock. `handle(message)` must 
 | API | Behavior |
 | --- | --- |
 | `Runtime(url, api_key=..., transport="http")` | URL is the gateway HTTP/HTTPS origin. Every POST includes the Bearer key and v1 protocol header; no redirects or retries. Supports `async with` |
-| `await runtime.register(type, factory, description="")` | Saves a synchronous factory with no arguments; returns when registration is ready, before object creation. No `stream` argument |
+| `await runtime.register(type, factory, description="")` | Registers an Actor; `factory` creates its objects. Returns when registration is ready, before instance creation. No `stream` argument |
 | `runtime.addr(type, id)` | Creates a local `Addr` without network I/O |
 | `await addr.call(message)` | Five-second total budget; saves the selected address from the first result or valid error, fixing subsequent operations to that generation |
 | `addr.stream(message, timeout=5)` | Returns a stream context with a deadline in (0, 60] seconds; consume with `async with` and `async for` |
@@ -66,7 +66,9 @@ The requested method is checked under the instance lock. `handle(message)` must 
 | `await runtime.wait_closed()` | Waits for shutdown; provider stream failure closes Runtime and propagates to waiters |
 | `await runtime.close()` | Idempotently closes SSE, cancels and joins SDK tasks, and releases objects; context exit calls it automatically |
 
-Messages and results must be JSON data. Null and large integers are supported; fractions decode to `decimal.Decimal` to preserve precision. Encoding accepts finite Python float and Decimal values. Arbitrary Python objects are unsupported. Factories must return promptly and synchronously; asynchronous handlers must cooperate with cancellation.
+For providers, the second registration parameter, `factory`, is a synchronous callable that takes no arguments and creates an Actor object. Pass a class with a no-argument constructor, as in `runtime.register("demo.chat", ChatActor)`, or a creation function or closure, such as `runtime.register("demo.configured", lambda: ChatActor())`. The SDK calls it only when an instance is needed, and it must return promptly. This is the Python SDK's object creation API; no factory is sent over the remote protocol.
+
+Messages and results must be JSON data. Null and large integers are supported; fractions decode to `decimal.Decimal` to preserve precision. Encoding accepts finite Python float and Decimal values. Arbitrary Python objects are unsupported. Asynchronous handlers must cooperate with cancellation.
 
 The same package exports `JSONValue`, `Actor`, `StreamActor`, `ActorFactory` and `Address`. `JSONValue` is recursive JSON data including Decimal. `Actor` / `StreamActor` are static Protocol typing aids describing `handle` returning `Awaitable[JSONValue]` and `handle_stream` returning `AsyncIterator[JSONValue]`. No inheritance is required; these types do not divide registrations or lifetimes. `ActorFactory` is a synchronous factory with no arguments; `Address` is a TypedDict with optional generation. The package includes `py.typed` for inline type checking.
 
@@ -92,7 +94,7 @@ except UnsupportedOperationError as exc:
 count = await actor.call({"n": 5})  # Same Addr and generation
 ```
 
-Missing address evidence or a contradictory Stream terminal is treated as 1004. Error 1013 is distinct from factory/business failure 1000 and unknown JSON-RPC method -32601.
+Missing address evidence or a contradictory Stream terminal is treated as 1004. Error 1013 is distinct from instance creation or business failure 1000 and unknown JSON-RPC method -32601.
 
 If the first Call or Stream may have been accepted without valid generation evidence, it reports an unknown outcome and leaves the handle uncertain. Later operations fail locally with `AddressUncertainError`. Obtaining a fresh handle is an explicit caller decision and does not deduplicate earlier work. Authentication/parameter rejection and definite connection-establishment failure do not contaminate the handle. Fixed addresses never change generation automatically on error. Error messages use fixed diagnostics without forwarding user stack traces or raw server diagnostics.
 
@@ -102,7 +104,7 @@ The SDK acknowledges an item after processing, when iteration requests the next 
 
 An early `break` must leave the context or explicitly `await chunks.aclose()`. Close sends cancellation and joins tasks; Runtime shutdown also owns cleanup. Cancellation preserves the shared Actor and does not prove external side effects have ended. Instance locks and execution slots remain held until handlers actually exit. Do not rely on garbage collection to end streams.
 
-A pure Call consumer opens no SSE connection; each Stream consumer opens its own SSE. Providers do not reconnect after disconnection. A Runtime may both register and call services. Send, WS and remote Call cancellation APIs are unavailable; Stream supports cancellation per request.
+A pure Call consumer opens no SSE connection; each Stream consumer opens its own SSE. Providers do not reconnect after disconnection. A Runtime may both register and call Actors. Send, WS and remote Call cancellation APIs are unavailable; Stream supports cancellation per request.
 
 ## Migration and reference
 

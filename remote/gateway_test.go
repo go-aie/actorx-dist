@@ -214,12 +214,12 @@ func TestRegistrationOwnershipAndCloseWait(t *testing.T) {
 	}
 	cancel() // install ctx does not own the session
 
-	list := g.Services()
+	list := g.Actors()
 	if len(list) != 1 {
 		t.Fatal(list)
 	}
 	list[0].Description = "mutated"
-	if g.Services()[0].Description != "original" {
+	if g.Actors()[0].Description != "original" {
 		t.Fatal("directory exposed mutable storage")
 	}
 	if _, err := g.Register(testCtx(t), protocol.RegisterParams{Type: "demo.ping"}); err == nil {
@@ -233,7 +233,7 @@ func TestRegistrationOwnershipAndCloseWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	await(t, entered)
-	if len(g.Services()) != 0 {
+	if len(g.Actors()) != 0 {
 		t.Fatal("closing registration in directory")
 	}
 	if _, err := g.Register(testCtx(t), protocol.RegisterParams{Type: "other.type"}); err == nil {
@@ -272,7 +272,7 @@ func TestInstallationFailureAndReregistration(t *testing.T) {
 		t.Fatal("installation discarded cleanup handle")
 	}
 	await(t, entered)
-	if len(g.Services()) != 0 {
+	if len(g.Actors()) != 0 {
 		t.Fatal("failed install published")
 	}
 	_, err = g.Register(testCtx(t), protocol.RegisterParams{Type: "demo.ping"})
@@ -294,7 +294,7 @@ func TestInstallationFailureAndReregistration(t *testing.T) {
 	if err := r.Close(testCtx(t)); err != nil {
 		t.Fatal(err)
 	}
-	if len(g.Services()) != 1 {
+	if len(g.Actors()) != 1 {
 		t.Fatal("stale handle withdrew replacement")
 	}
 	if err := g.Close(testCtx(t)); err != nil {
@@ -316,7 +316,7 @@ func TestGatewayAdmissionAndErrorPrecedence(t *testing.T) {
 	request.DeadlineUnixMS = nil
 	request.Address.Type = "missing.type"
 	_, err = g.Call(testCtx(t), request)
-	rpcCode(t, err, protocol.ServiceUnavailable)
+	rpcCode(t, err, protocol.ActorUnavailable)
 	request.Address.Type = "demo.ping"
 	g.mu.Lock()
 	g.active = protocol.Capacity

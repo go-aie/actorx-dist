@@ -223,7 +223,7 @@ func (m Message) Parameters(direction Direction) (any, *Error) {
 			err = p.Validate()
 		}
 		out = p
-	case direction == ToGateway && m.Method == Services:
+	case direction == ToGateway && m.Method == Actors:
 		if len(raw) == 0 {
 			raw = []byte("{}")
 		}

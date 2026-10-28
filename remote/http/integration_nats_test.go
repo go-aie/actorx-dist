@@ -108,8 +108,8 @@ func TestHTTPNATS(t *testing.T) {
 	// has no directory side effects.
 	register := request(protocol.Register, "register", protocol.RegisterParams{Type: typ, Description: "Go test provider"})
 	checkPost(register, "", "wrong", 401)
-	if len(g.Services()) != 0 {
-		t.Fatal("unauthorized registration published a service")
+	if len(g.Actors()) != 0 {
+		t.Fatal("unauthorized registration published an Actor")
 	}
 	providerCtx, disconnect := context.WithCancel(ctx)
 	defer disconnect()
@@ -216,22 +216,22 @@ func TestHTTPNATS(t *testing.T) {
 		info.SessionToken == "" {
 		t.Fatal("invalid first registration frame")
 	}
-	if services := g.Services(); len(services) != 1 || services[0].Type != typ {
-		t.Fatal("missing directory entry", services)
+	if actors := g.Actors(); len(actors) != 1 || actors[0].Type != typ {
+		t.Fatal("missing directory entry", actors)
 	}
-	directory, err := post(ctx, request(protocol.Services, "directory", struct{}{}), "", "application/json", testKey)
+	directory, err := post(ctx, request(protocol.Actors, "directory", struct{}{}), "", "application/json", testKey)
 	if err != nil {
 		t.Fatal(err)
 	}
 	directoryBody, _ := io.ReadAll(directory.Body)
 	directory.Body.Close()
 	directoryMessage, directoryErr := protocol.ParseMessage(directoryBody)
-	var services protocol.ServicesResult
+	var actors protocol.ActorsResult
 	if directory.StatusCode != 200 ||
 		directoryErr != nil ||
-		json.Unmarshal(directoryMessage.Result, &services) != nil ||
-		len(services.Services) != 1 ||
-		services.Services[0].Type != typ {
+		json.Unmarshal(directoryMessage.Result, &actors) != nil ||
+		len(actors.Actors) != 1 ||
+		actors.Actors[0].Type != typ {
 		t.Fatal("HTTP directory", string(directoryBody))
 	}
 	// A second registration fails in ordinary JSON, leaving this SSE alive.
@@ -347,7 +347,7 @@ func TestHTTPNATS(t *testing.T) {
 	}
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	for len(g.Services()) != 0 {
+	for len(g.Actors()) != 0 {
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
@@ -374,7 +374,7 @@ func TestHTTPNATS(t *testing.T) {
 	if _, err := io.ReadAll(reader); err != nil {
 		t.Fatal("Gateway.Close failed to end SSE", err)
 	}
-	if len(g.Services()) != 0 {
+	if len(g.Actors()) != 0 {
 		t.Fatal("closed Gateway retained directory")
 	}
 	if _, err := rt.Addr(typ, "still-open"); err != nil {
@@ -421,7 +421,7 @@ func TestHTTPNATS(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatal("write failure did not end handler")
 		}
-		if len(g2.Services()) != 0 {
+		if len(g2.Actors()) != 0 {
 			t.Fatal("write failure retained registration")
 		}
 	})

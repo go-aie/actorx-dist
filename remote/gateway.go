@@ -280,14 +280,15 @@ func waitClose(ctx context.Context, done <-chan struct{}, result func() error) e
 	}
 }
 
-// Services returns an independently allocated directory snapshot.
-func (g *Gateway) Services() []protocol.Service {
+// Actors returns an independently allocated snapshot of ready Actor registrations
+// on this Gateway. It does not enumerate running instances.
+func (g *Gateway) Actors() []protocol.Actor {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	out := make([]protocol.Service, 0, len(g.registrations))
+	out := make([]protocol.Actor, 0, len(g.registrations))
 	for _, r := range g.registrations {
 		if r.ready && !g.closed {
-			out = append(out, protocol.Service{
+			out = append(out, protocol.Actor{
 				Type:        r.info.Type,
 				Description: r.description,
 				Protocol:    protocol.Version,
@@ -331,7 +332,7 @@ func (g *Gateway) Call(ctx context.Context, request protocol.CallParams) (protoc
 	r := g.registrations[request.Address.Type]
 	if r == nil || !r.ready {
 		g.mu.Unlock()
-		return response, protocol.NewError(protocol.ServiceUnavailable, "Service unavailable", addressEvidence(response.Address))
+		return response, protocol.NewError(protocol.ActorUnavailable, "Actor unavailable", addressEvidence(response.Address))
 	}
 	if g.active >= protocol.Capacity {
 		g.mu.Unlock()
@@ -419,7 +420,7 @@ func mapError(err error, address *protocol.Address) *protocol.Error {
 	case errors.Is(err, actorx.ErrFull):
 		code = protocol.Full
 	case errors.Is(err, actorxdist.ErrTypeUnavailable):
-		code = protocol.ServiceUnavailable
+		code = protocol.ActorUnavailable
 	case errors.Is(err, actorxdist.ErrOwnerUnavailable):
 		code = protocol.OwnerUnavailable
 	case errors.Is(err, actorxdist.ErrContract):

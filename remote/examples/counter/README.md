@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-An independent Python provider registers `demo.counter`. A consumer sends an increment over HTTP and receives the new total. The Go gateway uses internal actorx-dist/NATS services to activate proxies on demand. The provider and consumer need only the gateway URL and a shared API Key. Neither listens on a port or installs a NATS client.
+An independent Python provider registers the `demo.counter` Actor. A consumer sends an increment over HTTP and receives the new total. The Go gateway uses internal actorx-dist/NATS to activate proxies on demand. The provider and consumer need only the gateway URL and a shared API Key. Neither listens on a port or installs a NATS client.
 
 ## Run
 
@@ -58,13 +58,25 @@ Each Call sends `{"n": 5}`. The first two calls reuse the counter for `orders-42
 
 ## Implementation
 
-[provider.py](provider.py) defines `Counter.handle`, which adds the integer `n` to its `count` and returns the new total, and registers a factory with no arguments. The SDK manages object creation, serial execution, and replies.
+With the provider running, query the registered Actors through `runtime/actors`:
+
+```sh
+curl -sS http://127.0.0.1:8080/runtime/rpc \
+  -H "Authorization: Bearer $REMOTE_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'X-Actorx-Remote-Protocol: actorx.remote/v1' \
+  -d '{"jsonrpc":"2.0","id":"list:1","method":"runtime/actors","params":{}}'
+```
+
+`result.actors` contains an entry with `type: "demo.counter"`. This lists registrations, not running counter instances; different IDs do not add directory entries.
+
+[provider.py](provider.py) defines `Counter.handle`, which adds the integer `n` to its `count` and returns the new total, and registers the Actor with `runtime.register(type, Counter)`. The SDK manages object creation, serial execution, and replies.
 
 [consumer.py](consumer.py) uses `Runtime.addr(...).call(...)` to call the same Addr repeatedly, then another ID. The totals show state reuse and independence. `--count` controls the number of calls to the first ID; each call adds 5. [gateway/main.go](gateway/main.go) reads the Key from the environment, assembles a shared actorxdist.Runtime and HTTP handler, and shuts down in this order: Gateway → HTTP Server → Runtime.
 
 This example runs from local source and uses Call. Restart the provider to register again after a disconnect.
 
-Counter only implements `handle`. It uses the same `register(type, factory)` API as [Chat](../chat/README.md), which implements `handle_stream`. An Actor can implement both methods and share state through one Addr. Requesting a missing operation raises `UnsupportedOperationError` (1013) with the selected address; that Addr can still use the supported operation. See the [SDK guide](../../sdk/python/README.md) for both methods and error handling.
+Counter only implements `handle`. It uses the same `runtime.register` API as [Chat](../chat/README.md), which implements `handle_stream`. An Actor can implement both methods and share state through one Addr. Requesting a missing operation raises `UnsupportedOperationError` (1013) with the selected address; that Addr can still use the supported operation. See the [SDK guide](../../sdk/python/README.md) for both methods and error handling.
 
 The gateway and SDK use `actorx.remote/v1` together. If this Type was previously registered with Call-only bindings, choose a new Type such as `demo.counter.v2` for both provider and consumer; see [protocol and Type migration](../../docs/runtime.md#protocol-and-type-migration).
 

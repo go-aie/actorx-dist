@@ -20,15 +20,15 @@ provider object ← provider SDK ← registration SSE create/invoke/invoke_strea
 | actorx-dist | Type/ID addressing, generation selection, unique proxy ownership, Call and Stream |
 | remote | Gateway, registrations, provider sessions, ProxyActor and response correlation |
 | remote/http | Authentication, routing, JSON conversion, SSE and connection/write deadlines |
-| Python SDK | Factories, business objects, serial handlers, address state and HTTP/SSE transport |
+| Python SDK | Actor instance creation, serial handlers, address state and HTTP/SSE transport |
 
 The gateway borrows one existing `*actorxdist.Runtime`. External programs do not need a NATS client or listener. HTTP/SSE is an access adapter, not another actorx Channel implementation. The SDK Runtime manages external connections and Python objects; actorxdist.Runtime manages proxy ownership. The SDK never claims ownership or generates actorx-dist generations.
 
-`register(type, factory)` installs creation capability and opens a provider SSE stream. It returns after validating the registration result, before any business object is created. `addr(type, id)` only creates a local handle. Its first Call or Stream asks actorx-dist to find or activate a ProxyActor. During `Started`, the proxy obtains its complete Self address and waits for `actor/create` to succeed. Only then can `actor/invoke` or `actor/invoke_stream` run. An existing ready proxy skips creation.
+The provider registers an Actor through the SDK and opens a registration SSE stream. The SDK's registration call returns after validating the result, before any business object is created. `addr(type, id)` only creates a local handle. Its first Call or Stream asks actorx-dist to find or activate a ProxyActor. During `Started`, the proxy obtains its complete Self address and waits for `actor/create` to succeed. Only then can `actor/invoke` or `actor/invoke_stream` run. An existing ready proxy skips creation.
 
-The SDK keeps objects per registration and complete address (Type/ID/generation). Repeated create for that identity reuses the object and responds to the new RPC ID; different IDs or generations have separate objects. Factories are short synchronous no-argument classes, functions or configuration closures. Registration never calls the factory. On the first create, the actual object must have at least one callable `handle` / `handle_stream`; otherwise creation fails with 1000.
+The SDK keeps objects per registration and complete address (Type/ID/generation). Repeated create for that identity reuses the object and responds to the new RPC ID; different IDs or generations have separate objects. Registration does not create an object. In Python, the SDK calls the class or creation function supplied at registration only when an instance is needed; see the [SDK guide](../sdk/python/README.md#api-and-types) for the `factory` parameter contract. On the first create, the actual object must have at least one callable `handle` / `handle_stream`; otherwise creation fails with 1000.
 
-Python uses one `register(type, factory, description="")` API, with no `stream` switch. Call/Stream share the actual object, instance lock and execution slot; the requested method is checked under that lock. `handle(message)` must return an awaitable producing one JSON value. `handle_stream(message)` must directly return an async iterator, including async generators and custom iterators. Invalid return shapes and business exceptions after method invocation produce 1000 without switching operations. `Actor` / `StreamActor` are static typing aids, not separate registrations or lifetimes. Handlers on the same instance run serially; different instances can progress independently.
+Python registers all Actors through `runtime.register`, with no `stream` switch. Call/Stream share the actual object, instance lock and execution slot; the requested method is checked under that lock. `handle(message)` must return an awaitable producing one JSON value. `handle_stream(message)` must directly return an async iterator, including async generators and custom iterators. Invalid return shapes and business exceptions after method invocation produce 1000 without switching operations. `Actor` / `StreamActor` are static typing aids, not separate registrations or lifetimes. Handlers on the same instance run serially; different instances can progress independently.
 
 ## Addresses and errors
 
@@ -87,7 +87,7 @@ Go code is part of the existing actorx-dist module. [Gateway](../gateway.go) coo
 | `Registration.Close(ctx)` | Idempotently closes the session and waits for owned cleanup |
 | `Gateway.Accept(ctx, token, response)` | Validates/correlates a provider response; does not run user handlers |
 | `Gateway.Call(ctx, params)` | Uses actorx-dist Call; preserves selected address even on error |
-| `Gateway.Services()` | Independently allocated snapshot of ready local registrations |
+| `Gateway.Actors()` | Independent snapshot of registered Actors on this Gateway; does not enumerate running instances |
 | `Gateway.Close(ctx)` | Rejects new work and joins owned registrations; leaves borrowed Runtime open |
 | `remotehttp.NewHandler(gateway, options)` | Requires `Options{APIKey: key}`; takes ownership of neither Gateway nor Runtime |
 
@@ -111,7 +111,9 @@ The independent-process example demonstrates the local source chain, not release
 
 ## Protocol and Type migration
 
-During early development, the unified gateway and Python SDK retain `actorx.remote/v1`. Use matching gateway and SDK implementations. The SDK adds `X-Actorx-Remote-Protocol: actorx.remote/v1` to every POST and validates the registration result. After authentication, HTTP rejects missing or mismatched versions with 400 before dispatch. Remove the old `stream=True` registration argument and all `capabilities` fields. Implement `handle`, `handle_stream`, or both, and use `register(type, factory)` for every Actor.
+The Actor directory uses `runtime/actors` and the result field `actors`; the Go API is `Gateway.Actors()`. The unavailable error is `actor_unavailable` (1002). Earlier development names have been removed, so directory callers and error handling must be updated together. This naming change does not alter actorx-dist DTOs or Type contracts.
+
+During early development, the unified gateway and Python SDK retain `actorx.remote/v1`. Use matching gateway and SDK implementations. The SDK adds `X-Actorx-Remote-Protocol: actorx.remote/v1` to every POST and validates the registration result. After authentication, HTTP rejects missing or mismatched versions with 400 before dispatch. Remove the old `stream=True` registration argument and all `capabilities` fields. Implement `handle`, `handle_stream`, or both, and use `runtime.register` for every Actor.
 
 The remote wire version and actorx-dist Type contract are separate. All registrations now have fixed Call, Stream and Started bindings. A former Call-only Type gains a binding and changes its fingerprint: on an existing Registry, choose a new Type such as `demo.counter.v2` for both provider and consumer. Restarting or Unregister does not erase a published contract. A former Stream-capable Type retains its fingerprint if DTOs and bindings are unchanged; renaming the Go proxy struct alone does not require a new Type. See the [contract reference](../../docs/contract.md).
 

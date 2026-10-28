@@ -29,7 +29,7 @@ const (
 	Capacity        = 8
 
 	Register     = "runtime/register"
-	Services     = "runtime/services"
+	Actors       = "runtime/actors"
 	Call         = "actor/call"
 	Create       = "actor/create"
 	InvokeMethod = "actor/invoke"
@@ -44,7 +44,7 @@ const (
 	// Positive codes describe remote execution and lifecycle outcomes.
 	RemoteError          = 1000
 	Full                 = 1001
-	ServiceUnavailable   = 1002
+	ActorUnavailable     = 1002
 	ActivationUnknown    = 1003
 	OutcomeUnknown       = 1004
 	DeadlineExceeded     = 1005
@@ -176,14 +176,15 @@ type RegistrationInfo struct {
 	SessionToken string `json:"session_token"`
 }
 
-type Service struct {
+// Actor describes a registered Actor in the directory, not a running instance.
+type Actor struct {
 	Type        string `json:"type"`
 	Description string `json:"description"`
 	Protocol    string `json:"protocol"`
 }
 
-type ServicesResult struct {
-	Services []Service `json:"services"`
+type ActorsResult struct {
+	Actors []Actor `json:"actors"`
 }
 
 type CallParams struct {
@@ -243,8 +244,8 @@ func Kind(code int) string {
 		return "remote_error"
 	case Full:
 		return "full"
-	case ServiceUnavailable:
-		return "service_unavailable"
+	case ActorUnavailable:
+		return "actor_unavailable"
 	case ActivationUnknown:
 		return "activation_unknown"
 	case OutcomeUnknown:

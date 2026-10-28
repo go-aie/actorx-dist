@@ -6,7 +6,7 @@ English | [中文](protocol.zh.md)
 
 ## Shared model
 
-An Actor has one Type/ID/generation identity, one lifetime and one factory registration. Call and Stream are its two operations.
+Providers register Actors. Each instance has one Type/ID/generation identity and one lifetime; Call and Stream are its two operations.
 
 | | Call | Stream |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ The SDK sends v1 automatically and validates registration results. After authent
 | --- | --- | --- |
 | `runtime/register` | `Accept: text/event-stream, application/json` | 200 SSE: registration result, then that registration's creation, execution and credit/cancel messages |
 | `actor/stream` | Same as above | 200 SSE: stream_open, chunks, final result/error |
-| Call, services, ordinary request batch | `Accept: application/json` | 200 JSON result/error or response array |
+| Call, Actor directory, ordinary request batch | `Accept: application/json` | 200 JSON result/error or response array |
 | Provider result, error or chunk | `X-Actorx-Remote-Session: <session_token>` | 204 after validation and handoff |
 | Consumer credit/cancel | No session header; one notification per POST | 204 after validation and handoff |
 
@@ -51,7 +51,7 @@ Configure a key generated from at least 32 random bytes through a trusted enviro
 
 ### JSON-RPC
 
-Envelopes use JSON-RPC `2.0`. Requests contain `method`, object `params` and `id`; notifications omit `id`. Responses echo the ID and contain exactly one of `result` or `error`, including `result: null`. Services permits omitted params. Methods match complete slash-separated names without dot aliases; unknown methods or wrong directions produce -32601.
+Envelopes use JSON-RPC `2.0`. Requests contain `method`, object `params` and `id`; notifications omit `id`. Responses echo the ID and contain exactly one of `result` or `error`, including `result: null`. The Actor directory permits omitted params. Methods match complete slash-separated names without dot aliases; unknown methods or wrong directions produce -32601.
 
 Gateway/SDK-generated IDs are nonempty strings. The protocol also accepts numeric and null IDs, preserving their type and precision. `id: null` is a request with an ID. IDs correlate one communication segment; they provide no business deduplication. Provider responses must also match the registration and complete address. Bad or late responses cannot consume a legitimate pending request.
 
@@ -70,7 +70,7 @@ Ordinary request batches contain at most eight items and execute sequentially wi
 }
 ```
 
-`type` identifies a service type and `id` a business instance. The first `actor/call` or `actor/stream` may omit generation; the gateway selects it through actorx-dist. A generation is a canonical unpadded base64url encoding of 16 bytes. Provider creation/execution messages require complete addresses.
+`type` identifies an Actor type and `id` a business instance. The first `actor/call` or `actor/stream` may omit generation; the gateway selects it through actorx-dist. A generation is a canonical unpadded base64url encoding of 16 bytes. Provider creation/execution messages require complete addresses.
 
 The SDK saves generation from a successful result, valid error address or first Stream item. Later operations remain fixed to it, without automatic replacement on error. stream_open has no address and only establishes control; empty streams supply the address in their terminal. A possibly accepted request without trustworthy generation evidence leaves the handle uncertain; later operations raise `AddressUncertainError`. A fresh handle does not deduplicate earlier work. Authentication/parameter rejection and definite connection-establishment failure do not contaminate the handle.
 
@@ -79,7 +79,7 @@ All methods appear below. Params are required unless marked optional; a fixed ad
 | Method | Message | Params | Successful result |
 | --- | --- | --- | --- |
 | `runtime/register` | Request | type; optional description, default empty | protocol, type, session_token |
-| `runtime/services` | Request | Empty object, may be omitted | services: array of type/description/protocol |
+| `runtime/actors` | Request | Empty object, may be omitted | actors: array of type/description/protocol |
 | `actor/call` | Request | address, input; optional deadline_unix_ms | Fixed address, value |
 | `actor/create` | Request | Fixed address, deadline_unix_ms | Same address |
 | `actor/invoke` | Request | Fixed address, input, deadline_unix_ms | Same address, value |
@@ -90,11 +90,13 @@ All methods appear below. Params are required unless marked optional; a fixed ad
 | `actor/credit` | Notification | request_id, stream_token, ack_seq | None |
 | `actor/cancel` | Notification | request_id, stream_token | None |
 
-Registration confirms factory availability without constructing an object. Services is a current snapshot, not a promise of later availability. Its protocol identifies communication rules, without promising business method support. v1 registration params/results and service entries have no `capabilities`. Removed registration params are rejected even when false, null or empty; the SDK also rejects registration results containing that field.
+Registration establishes the provider session without creating an Actor instance or verifying that instance creation will succeed. The Actor directory lists current registrations, not running instances, and does not promise later availability. Its protocol identifies communication rules, without promising business method support. v1 registration params/results and Actor entries have no `capabilities`. Removed registration params are rejected even when false, null or empty; the SDK also rejects registration results containing that field.
 
 JSON below is indented for readability; actual SSE frames still encode each JSON message on one line as specified above. Addresses, tokens and deadlines are illustrative; real exchanges use selected addresses/tokens and calculated deadlines.
 
-### runtime/register: register a factory
+### runtime/register: register an Actor
+
+The provider registers the Actor it offers and establishes a connection for subsequent creation, invocation and stream control messages. Registration does not create an instance; the first Call or Stream creates one on demand.
 
 Provider → gateway, one HTTP POST accepting SSE:
 
@@ -125,7 +127,7 @@ Gateway → provider, the first registration SSE frame returns protocol, Type an
 
 The connection stays open for create, invoke, invoke_stream and stream control. Successful registration does not construct a business object.
 
-### runtime/services: list services
+### runtime/actors: list registered Actors
 
 Consumer → gateway, an ordinary HTTP POST; params may be omitted:
 
@@ -133,19 +135,19 @@ Consumer → gateway, an ordinary HTTP POST; params may be omitted:
 {
   "jsonrpc": "2.0",
   "id": "list:1",
-  "method": "runtime/services",
+  "method": "runtime/actors",
   "params": {}
 }
 ```
 
-The gateway returns the current service snapshot on that HTTP response:
+The gateway returns the current Actor directory snapshot on that HTTP response:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "list:1",
   "result": {
-    "services": [
+    "actors": [
       {
         "type": "demo.chat",
         "description": "",
@@ -534,9 +536,9 @@ Standard errors are -32700 `parse_error`, -32600 `invalid_request`, -32601 `meth
 
 | Code | error.data.kind | Meaning |
 | --- | --- | --- |
-| 1000 | remote_error | Factory/handler exception, no valid methods or invalid return shape |
+| 1000 | remote_error | Instance creation failure, handler exception, no valid methods or invalid return shape |
 | 1001 | full | Definite capacity rejection |
-| 1002 | service_unavailable | No available registration; business work not dispatched |
+| 1002 | actor_unavailable | No available registration; business work not dispatched |
 | 1003 | activation_unknown | Uncertain activation or generation selection |
 | 1004 | outcome_unknown | Work may have executed without trustworthy terminal evidence |
 | 1005 | deadline_exceeded | Definite deadline failure |
@@ -572,7 +574,7 @@ Errors echo the original request ID, or null when unknown. Application errors co
 }
 ```
 
-1013 requires a complete address; Stream must have zero items and `final_seq: 0`. It proves the requested method was not entered, although construction may have occurred. Python raises `UnsupportedOperationError` and saves generation, allowing the same Addr to use a supported operation. Missing address or contradictory terminal evidence produces 1004. This differs from unknown RPC method -32601 and factory/business failure 1000.
+1013 requires a complete address; Stream must have zero items and `final_seq: 0`. It proves the requested method was not entered, although construction may have occurred. Python raises `UnsupportedOperationError` and saves generation, allowing the same Addr to use a supported operation. Missing address or contradictory terminal evidence produces 1004. This differs from unknown RPC method -32601 and instance creation or business failure 1000.
 
 Validated provider errors 1000/1001/1004/1005/1009/1013 retain classification; other legal application errors normalize to 1000. Standard RPC errors for known outbound methods become 1012. Known kind/code pairs must agree. Exception types, stack traces and arbitrary provider extensions do not cross actorx-dist; diagnostics are bounded to 512 UTF-8 bytes.
 

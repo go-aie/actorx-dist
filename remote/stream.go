@@ -53,7 +53,7 @@ func (g *Gateway) Stream(
 	r := g.registrations[request.Address.Type]
 	if r == nil || !r.ready {
 		g.mu.Unlock()
-		return response, protocol.NewError(protocol.ServiceUnavailable, "Service unavailable", addressEvidence(response.Address))
+		return response, protocol.NewError(protocol.ActorUnavailable, "Actor unavailable", addressEvidence(response.Address))
 	}
 	if g.active >= protocol.Capacity {
 		g.mu.Unlock()

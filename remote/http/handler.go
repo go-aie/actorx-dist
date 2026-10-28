@@ -176,8 +176,8 @@ func (h *handler) dispatch(ctx context.Context, m protocol.Message, _ bool) (any
 		return nil, err
 	}
 	switch m.Method {
-	case protocol.Services:
-		return protocol.ServicesResult{Services: h.gateway.Services()}, nil
+	case protocol.Actors:
+		return protocol.ActorsResult{Actors: h.gateway.Actors()}, nil
 	case protocol.Credit, protocol.Cancel, protocol.ChunkMethod:
 		return nil, protocol.NewError(protocol.TransportMode, "Control requires a single notification POST", nil)
 	case protocol.Call:

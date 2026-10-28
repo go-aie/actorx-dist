@@ -55,7 +55,7 @@ provider 首次输出 `Chat actor created` 和 `Chat turn 1`。再次运行相�
 
 ## 实现
 
-[provider.py](provider.py) 实现 `handle_stream(message)` 异步生成器，与 Counter 一样使用 `register(type, factory)`。注册保存工厂，首次 Stream 才创建对象。六段固定文本超过四项发送窗口，慢消费会经 gateway 和 actorx-dist 传递背压。
+[provider.py](provider.py) 实现 `handle_stream(message)` 异步生成器，与 Counter 一样通过 `runtime.register(type, ChatActor)` 注册 Actor。注册不创建实例；首次 Stream 访问新 ID 时才创建对象。六段固定文本超过四项发送窗口，慢消费会经 gateway 和 actorx-dist 传递背压。
 
 [consumer.py](consumer.py) 使用 `async with actor.stream(...) as chunks` 和 `async for`。正常迭代耗尽表示收到明确终态且全部项已处理；中途 `break`、异常或 Runtime 关闭会取消未完成流。每个流默认总期限五秒，`timeout` 可设为至多 60 秒；本示例为 30 秒。
 

@@ -20,15 +20,15 @@ provider 对象 ← provider SDK ← 注册 SSE create/invoke/invoke_stream
 | actorx-dist | Type/ID 寻址、选代、代理唯一归属、Call 与 Stream |
 | remote | Gateway、注册、provider 会话、ProxyActor 与响应关联 |
 | remote/http | 鉴权、路由、JSON 转换、SSE 和连接/写期限 |
-| Python SDK | 工厂、业务对象、串行 handler、地址状态与 HTTP/SSE 传输 |
+| Python SDK | Actor 实例创建、串行 handler、地址状态与 HTTP/SSE 传输 |
 
 gateway 借用已有的一个 `*actorxdist.Runtime`，外部程序无需 NATS 客户端或监听端口。HTTP/SSE 是接入适配，不是新增的 actorx Channel 实现。SDK Runtime 管理外部连接及 Python 对象，actorxdist.Runtime 管理代理归属；SDK 不 claim 归属，也不生成 actorx-dist generation。
 
-`register(type, factory)` 安装创建能力并建立 provider SSE，在校验注册结果后返回，此时尚未创建业务对象。`addr(type, id)` 只创建本地句柄。首次 Call 或 Stream 由 actorx-dist 查找或激活 ProxyActor；代理在 `Started` 中取得完整 Self 地址并等待 `actor/create` 成功，之后才能执行 `actor/invoke` 或 `actor/invoke_stream`。已有就绪代理则省略创建。
+Provider 通过 SDK 注册 Actor 并建立注册 SSE，在校验注册结果后返回，此时尚未创建业务对象。`addr(type, id)` 只创建本地句柄。首次 Call 或 Stream 由 actorx-dist 查找或激活 ProxyActor；代理在 `Started` 中取得完整 Self 地址并等待 `actor/create` 成功，之后才能执行 `actor/invoke` 或 `actor/invoke_stream`。已有就绪代理则省略创建。
 
-SDK 按本次注册和完整地址（Type/ID/generation）保存对象。同一身份的重复 create 复用对象，并响应新的 RPC ID；不同 ID 或代次使用独立对象。工厂是短时同步无参函数，可以是类、函数或配置闭包；注册时不调用工厂。首次 create 要求真实对象至少有一个可调用的 `handle` / `handle_stream`，否则返回创建失败 1000。
+SDK 按本次注册和完整地址（Type/ID/generation）保存对象。同一身份的重复 create 复用对象，并响应新的 RPC ID；不同 ID 或代次使用独立对象。注册时不创建对象；Python SDK 在需要实例时才调用注册时传入的类或创建函数，`factory` 参数约束见 [SDK 指南](../sdk/python/README.zh.md#api-与类型)。首次 create 要求真实对象至少有一个可调用的 `handle` / `handle_stream`，否则返回创建失败 1000。
 
-Python 统一使用 `register(type, factory, description="")`，没有 `stream` 开关。Call/Stream 复用真实对象、实例锁和执行槽，在锁内检查所请求的方法。`handle(message)` 的结果必须可 await 并产出一个 JSON 值；`handle_stream(message)` 必须直接返回异步迭代器，可以是异步生成器或自定义迭代器。方法已调用但返回形态非法或业务抛异常时返回 1000，不改换通信操作。`Actor` / `StreamActor` 仅用于静态类型提示，不划分注册或生命周期。同实例 handler 串行执行，不同实例独立推进。
+Python 统一通过 `runtime.register` 注册 Actor，没有 `stream` 开关。Call/Stream 复用真实对象、实例锁和执行槽，在锁内检查所请求的方法。`handle(message)` 的结果必须可 await 并产出一个 JSON 值；`handle_stream(message)` 必须直接返回异步迭代器，可以是异步生成器或自定义迭代器。方法已调用但返回形态非法或业务抛异常时返回 1000，不改换通信操作。`Actor` / `StreamActor` 仅用于静态类型提示，不划分注册或生命周期。同实例 handler 串行执行，不同实例独立推进。
 
 ## 地址与错误
 
@@ -87,7 +87,7 @@ Go 代码属于现有 actorx-dist 模块。[Gateway](../gateway.go)接入已有 
 | `Registration.Close(ctx)` | 幂等关闭 session 并等待所属清理 |
 | `Gateway.Accept(ctx, token, response)` | 校验/关联 provider 响应，不执行用户 handler |
 | `Gateway.Call(ctx, params)` | 通过 actorx-dist Call，错误时也保留选代地址 |
-| `Gateway.Services()` | 就绪本地注册的独立快照 |
+| `Gateway.Actors()` | 当前 Gateway 中已注册 Actor 的独立快照，不枚举运行中的实例 |
 | `Gateway.Close(ctx)` | 拒绝新工作、等待所属注册，不关闭借用 Runtime |
 | `remotehttp.NewHandler(gateway, options)` | 要求 `Options{APIKey: key}`，不接管 Gateway/Runtime 所有权 |
 
@@ -111,7 +111,9 @@ Python `Runtime.close()` 关闭连接、取消并汇合 SDK 自有任务，然�
 
 ## 协议与 Type 迁移
 
-当前仍处于早期开发，统一后的 gateway 和 Python SDK 保留 `actorx.remote/v1`，两端实现须配套使用。SDK 每次 POST 自动携带 `X-Actorx-Remote-Protocol: actorx.remote/v1`，并校验注册结果；HTTP 在鉴权后、分派前对缺失或不匹配的版本返回 400。删除原注册参数 `stream=True` 及所有 `capabilities` 字段。对象实现 `handle`、`handle_stream` 中的一种或两种，统一使用 `register(type, factory)`。
+Actor 目录统一使用 `runtime/actors` 和结果字段 `actors`，Go 接口为 `Gateway.Actors()`；不可用错误为 `actor_unavailable`（1002）。早期开发名称已移除，目录与错误处理的调用方需同步更新；本次命名调整不改变 actorx-dist DTO 或 Type 契约。
+
+当前仍处于早期开发，统一后的 gateway 和 Python SDK 保留 `actorx.remote/v1`，两端实现须配套使用。SDK 每次 POST 自动携带 `X-Actorx-Remote-Protocol: actorx.remote/v1`，并校验注册结果；HTTP 在鉴权后、分派前对缺失或不匹配的版本返回 400。删除原注册参数 `stream=True` 及所有 `capabilities` 字段。对象实现 `handle`、`handle_stream` 中的一种或两种，统一通过 `runtime.register` 注册 Actor。
 
 remote wire 版本与 actorx-dist Type 契约分别管理。现在所有注册固定包含 Call、Stream、Started 绑定。原 Call-only Type 新增绑定会改变指纹：已有 Registry 上，provider 和 consumer 须同时选择新 Type，例如 `demo.counter.v2`。重启或 Unregister 不会抹掉已发布契约。原 Stream-capable Type 在 DTO 和绑定不变时保持指纹；仅重命名 Go 代理结构体不要求新 Type。详见[契约参考](../../docs/contract.zh.md)。
 

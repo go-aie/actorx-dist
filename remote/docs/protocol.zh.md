@@ -6,7 +6,7 @@
 
 ## 共同模型
 
-一个 Actor 使用同一套 Type/ID/generation 身份和生命周期，统一注册工厂；Call、Stream 是它的两种操作。
+Provider 注册 Actor。每个实例由 Type/ID/generation 标识，并拥有独立生命周期；Call、Stream 是它的两种操作。
 
 | | Call | Stream |
 | --- | --- | --- |
@@ -37,7 +37,7 @@ SDK 自动携带 v1，并校验注册结果。gateway 在鉴权后、读取 body
 | --- | --- | --- |
 | 注册 `runtime/register` | `Accept: text/event-stream, application/json` | 200 SSE：注册结果，然后是该注册的创建、执行、credit/cancel 消息 |
 | 消费 `actor/stream` | 同上 | 200 SSE：stream_open、分片、最终 result/error |
-| Call、服务目录、普通请求 batch | `Accept: application/json` | 200 JSON result/error 或响应数组 |
+| Call、Actor 目录、普通请求 batch | `Accept: application/json` | 200 JSON result/error 或响应数组 |
 | Provider 的结果、错误、chunk | `X-Actorx-Remote-Session: <session_token>` | 校验并交接后返回 204 |
 | Consumer 的 credit/cancel | 无会话 Header；每次单条通知 POST | 校验并交接后返回 204 |
 
@@ -51,7 +51,7 @@ SDK 自动携带 v1，并校验注册结果。gateway 在鉴权后、读取 body
 
 ### JSON-RPC
 
-信封使用 JSON-RPC `2.0`。请求含 `method`、对象形式的 `params` 和 `id`；通知省略 `id`；响应回显 ID，且只含 `result`、`error` 中的一种，`result: null` 也算结果。服务目录允许省略 params。方法按完整斜杠名称匹配，无点号别名；未知方法或方向错误为 -32601。
+信封使用 JSON-RPC `2.0`。请求含 `method`、对象形式的 `params` 和 `id`；通知省略 `id`；响应回显 ID，且只含 `result`、`error` 中的一种，`result: null` 也算结果。Actor 目录允许省略 params。方法按完整斜杠名称匹配，无点号别名；未知方法或方向错误为 -32601。
 
 Gateway/SDK 生成非空字符串 ID；协议也接受数字和 null，并保留其类型与精度。`id: null` 是有 ID 请求。ID 只关联本通信段的请求与响应，不提供业务去重。Provider 响应还须匹配注册和完整地址；坏响应或迟到响应不能消耗合法 pending 请求。
 
@@ -70,7 +70,7 @@ JSON 必须是 UTF-8，不接受重复键或 NaN/Infinity。忽略未知信封�
 }
 ```
 
-`type` 标识服务类型，`id` 标识业务实例。首次 `actor/call` 或 `actor/stream` 可以省略 generation；gateway 经 actorx-dist 选代。generation 是 16 字节的规范无填充 base64url 值。Provider 的创建/执行消息必须带完整地址。
+`type` 标识 Actor 类型，`id` 标识业务实例。首次 `actor/call` 或 `actor/stream` 可以省略 generation；gateway 经 actorx-dist 选代。generation 是 16 字节的规范无填充 base64url 值。Provider 的创建/执行消息必须带完整地址。
 
 SDK 从成功结果、有效错误地址或 Stream 首项保存 generation；后续操作固定该代次，不因错误自动换代。stream_open 不带地址，只建立控制通道；空流在终态提供地址。可能已受理但缺少可信选代证据时，句柄进入不明状态，后续操作抛 `AddressUncertainError`。显式取得新句柄不等于对之前的工作去重；鉴权/参数拒绝和确定的建连失败不污染句柄。
 
@@ -79,7 +79,7 @@ SDK 从成功结果、有效错误地址或 Stream 首项保存 generation；后
 | 方法 | 消息 | params | 成功 result |
 | --- | --- | --- | --- |
 | `runtime/register` | 请求 | type；可选 description，默认空 | protocol、type、session_token |
-| `runtime/services` | 请求 | 空对象，可省略 | services：type/description/protocol 数组 |
+| `runtime/actors` | 请求 | 空对象，可省略 | actors：type/description/protocol 数组 |
 | `actor/call` | 请求 | address、input；可选 deadline_unix_ms | 固定 address、value |
 | `actor/create` | 请求 | 固定 address、deadline_unix_ms | 相同 address |
 | `actor/invoke` | 请求 | 固定 address、input、deadline_unix_ms | 相同 address、value |
@@ -90,11 +90,13 @@ SDK 从成功结果、有效错误地址或 Stream 首项保存 generation；后
 | `actor/credit` | 通知 | request_id、stream_token、ack_seq | 无 |
 | `actor/cancel` | 通知 | request_id、stream_token | 无 |
 
-注册确认工厂可用，不创建对象。服务目录是当前快照，不保证后续可用性；其中 protocol 仅表示通信协议，不承诺对象支持哪些业务方法。v1 注册 params/result 和服务元素均无 `capabilities`；旧注册参数即使为 false、null 或空对象也被拒绝，SDK 同样拒绝含该字段的注册结果。
+注册建立 provider 会话，不创建 Actor 实例，也不验证实例创建能否成功。Actor 目录列出当前注册，不枚举运行中的实例，也不保证后续可用性；其中 protocol 仅表示通信协议，不承诺对象支持哪些业务方法。v1 注册 params/result 和 Actor 条目均无 `capabilities`；旧注册参数即使为 false、null 或空对象也被拒绝，SDK 同样拒绝含该字段的注册结果。
 
 以下 JSON 为便于阅读采用缩进格式；真实 SSE 帧仍按前文规定将每条 JSON 压为一行。地址、token 和期限均为示意值，实际通信使用运行时选定的地址/token 及计算得到的期限。
 
-### runtime/register：注册工厂
+### runtime/register：注册 Actor
+
+Provider 注册自己提供的 Actor，并建立后续接收创建、调用和流控制消息的连接。注册成功不创建实例；首次 Call 或 Stream 时按需创建。
 
 Provider → gateway，单条 HTTP POST，接受 SSE：
 
@@ -125,7 +127,7 @@ Gateway → provider，注册 SSE 的首帧返回 protocol、Type 和会话 toke
 
 连接随后保持打开，gateway 经它下发 create、invoke、invoke_stream 和流控制消息。注册成功不构造业务对象。
 
-### runtime/services：查看服务目录
+### runtime/actors：列出已注册的 Actor
 
 Consumer → gateway，普通 HTTP POST；params 可省略：
 
@@ -133,19 +135,19 @@ Consumer → gateway，普通 HTTP POST；params 可省略：
 {
   "jsonrpc": "2.0",
   "id": "list:1",
-  "method": "runtime/services",
+  "method": "runtime/actors",
   "params": {}
 }
 ```
 
-Gateway 在原 HTTP 响应中返回当前服务快照：
+Gateway 在原 HTTP 响应中返回当前 Actor 目录快照：
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "list:1",
   "result": {
-    "services": [
+    "actors": [
       {
         "type": "demo.chat",
         "description": "",
@@ -534,9 +536,9 @@ Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出
 
 | code | error.data.kind | 含义 |
 | --- | --- | --- |
-| 1000 | remote_error | 工厂/handler 异常、无有效方法或返回形态非法 |
+| 1000 | remote_error | 实例创建失败、handler 异常、无有效方法或返回形态非法 |
 | 1001 | full | 明确容量拒绝 |
-| 1002 | service_unavailable | 无可用注册服务，尚未投递业务工作 |
+| 1002 | actor_unavailable | 无可用 Actor 注册，尚未投递业务工作 |
 | 1003 | activation_unknown | 激活或选代证据不明 |
 | 1004 | outcome_unknown | 可能已执行，缺少可信终态 |
 | 1005 | deadline_exceeded | 确定的期限失败 |
@@ -572,7 +574,7 @@ Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出
 }
 ```
 
-1013 必须带完整地址，Stream 必须是零项且 `final_seq: 0`。它证明所请求的方法没有进入，但对象构造可能已经发生。Python 抛 `UnsupportedOperationError` 并保存 generation，同一 Addr 可继续调用已支持的另一种操作；缺地址或矛盾终态按 1004 处理。它与未知 RPC 方法 -32601、工厂/业务失败 1000 分别处理。
+1013 必须带完整地址，Stream 必须是零项且 `final_seq: 0`。它证明所请求的方法没有进入，但对象构造可能已经发生。Python 抛 `UnsupportedOperationError` 并保存 generation，同一 Addr 可继续调用已支持的另一种操作；缺地址或矛盾终态按 1004 处理。它与未知 RPC 方法 -32601、实例创建或业务失败 1000 分别处理。
 
 经校验的 provider 错误 1000/1001/1004/1005/1009/1013 保留分类，其他合法应用错误归一为 1000；已知出站方法的标准 RPC 错误转为 1012。已知 kind/code 必须一致。异常类型、堆栈和任意 provider 扩展数据不穿过 actorx-dist，诊断最多 512 UTF-8 字节。
 

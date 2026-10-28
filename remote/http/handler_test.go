@@ -34,8 +34,8 @@ func TestRegisterRejectsCapabilitiesBeforeInstallation(t *testing.T) {
 			if w.Code != http.StatusOK || e != nil || m.Error == nil || m.Error.Code != protocol.InvalidParams {
 				t.Fatalf("status %d, body %s, error %v", w.Code, w.Body.String(), e)
 			}
-			if len(g.Services()) != 0 {
-				t.Fatal("retired capabilities installed a service")
+			if len(g.Actors()) != 0 {
+				t.Fatal("retired capabilities installed an Actor")
 			}
 		})
 	}
@@ -55,13 +55,13 @@ func TestHTTPRequests(t *testing.T) {
 		code       int
 		headers    http.Header
 	}{
-		{"directory", `{"jsonrpc":"2.0","id":9007199254740993,"method":"runtime/services"}`, 200, 0, nil},
+		{"directory", `{"jsonrpc":"2.0","id":9007199254740993,"method":"runtime/actors"}`, 200, 0, nil},
 		{"parse", `{`, 200, protocol.ParseError, nil},
 		{"invalid", `false`, 200, protocol.InvalidRequest, nil},
 		{"unknown", `{"jsonrpc":"2.0","id":null,"method":"actor/unsupported"}`, 200, protocol.MethodNotFound, nil},
 		{
 			"params",
-			`{"jsonrpc":"2.0","id":1,"method":"runtime/services","params":[]}`,
+			`{"jsonrpc":"2.0","id":1,"method":"runtime/actors","params":[]}`,
 			200,
 			protocol.InvalidParams,
 			nil,
@@ -80,7 +80,7 @@ func TestHTTPRequests(t *testing.T) {
 			0,
 			nil,
 		},
-		{"notification", `{"jsonrpc":"2.0","method":"runtime/services"}`, 204, 0, nil},
+		{"notification", `{"jsonrpc":"2.0","method":"runtime/actors"}`, 204, 0, nil},
 		{"all notifications", `[{"jsonrpc":"2.0","method":"unknown"}]`, 204, 0, nil},
 		{
 			"SSE notification",
@@ -98,10 +98,10 @@ func TestHTTPRequests(t *testing.T) {
 		},
 		{"empty batch", `[]`, 200, protocol.InvalidRequest, nil},
 		{
-			"no service",
+			"no Actor",
 			`{"jsonrpc":"2.0","id":1,"method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"one"},"input":null}}`,
 			200,
-			protocol.ServiceUnavailable,
+			protocol.ActorUnavailable,
 			nil,
 		},
 		{
@@ -116,7 +116,7 @@ func TestHTTPRequests(t *testing.T) {
 		{"wrong session", `{"jsonrpc":"2.0","id":1,"result":null}`, 403, 0, http.Header{SessionHeader: {"wrong"}}},
 		{
 			"session request",
-			`{"jsonrpc":"2.0","id":1,"method":"runtime/services"}`,
+			`{"jsonrpc":"2.0","id":1,"method":"runtime/actors"}`,
 			400,
 			0,
 			http.Header{SessionHeader: {"wrong"}},
@@ -160,7 +160,7 @@ func TestHTTPRequests(t *testing.T) {
 	// replies and never installs the attempted provider registration.
 	r := httptest.NewRequest(
 		"POST", "/runtime/rpc",
-		strings.NewReader(`[{"jsonrpc":"2.0","method":"runtime/services"},{"jsonrpc":"2.0","id":"r","method":"runtime/register","params":{"type":"demo.ping"}},{"jsonrpc":"2.0","id":"s","method":"runtime/services"},1]`),
+		strings.NewReader(`[{"jsonrpc":"2.0","method":"runtime/actors"},{"jsonrpc":"2.0","id":"r","method":"runtime/register","params":{"type":"demo.ping"}},{"jsonrpc":"2.0","id":"s","method":"runtime/actors"},1]`),
 	)
 	r.Header.Set("Authorization", "Bearer "+testKey)
 	r.Header.Set("Content-Type", "application/json")
@@ -175,7 +175,7 @@ func TestHTTPRequests(t *testing.T) {
 		batch[2].Error.Code != protocol.InvalidRequest {
 		t.Fatal(w.Body.String())
 	}
-	if len(g.Services()) != 0 {
+	if len(g.Actors()) != 0 {
 		t.Fatal("invalid registration allocated a session")
 	}
 
