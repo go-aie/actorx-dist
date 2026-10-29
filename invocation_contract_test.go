@@ -38,7 +38,7 @@ func testContractNetwork(t *testing.T, options ...any) *network {
 	rt := testRuntime(t, options...)
 	n := &network{
 		rt:           rt,
-		registry:     newRegistry(nil),
+		registry:     newRegistry(nil, rt.names),
 		contracts:    newContractCache(rt.limits.transport.ContractCacheTypes),
 		stop:         make(chan struct{}),
 		codecSlots:   make(chan struct{}, 8),
@@ -56,7 +56,7 @@ func TestTypeContractHitsAndReadFailures(t *testing.T) {
 	var readErr error = nats.ErrKeyNotFound
 	n.registry.readFault = func(bucket, key string) error {
 		reads++
-		if bucket != typesBucket || key != "t."+identity.Token("missing") {
+		if bucket != testDefaultNames.TypesBucket || key != "t."+identity.Token("missing") {
 			t.Error("unexpected Registry read", bucket, key)
 		}
 		return readErr

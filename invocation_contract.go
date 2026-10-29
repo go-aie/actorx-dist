@@ -31,7 +31,7 @@ func (n *network) typeContract(ctx context.Context, typ string) (wireContract, e
 	if c, ok := n.contracts.get(typ); ok {
 		return c, nil
 	}
-	e, err := n.registry.get(ctx, typesBucket, "t."+identity.Token(typ), false)
+	e, err := n.registry.get(ctx, n.registry.names.TypesBucket, "t."+identity.Token(typ), false)
 	if err != nil {
 		if errors.Is(err, nats.ErrKeyNotFound) {
 			return wireContract{}, ErrTypeUnavailable

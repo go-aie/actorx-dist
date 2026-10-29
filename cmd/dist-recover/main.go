@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-aie/actorx-dist/internal/naming"
 	"github.com/go-aie/actorx-dist/internal/recovery"
 	"github.com/nats-io/nats.go"
 )
@@ -25,6 +26,7 @@ func (a durableAudit) Write(b []byte) (int, error) {
 }
 func run() error {
 	url := flag.String("nats", nats.DefaultURL, "NATS URL (supports credentials in URL)")
+	namespace := flag.String("namespace", naming.DefaultNamespace, "distributed namespace; must match the target Runtime")
 	typ := flag.String("type", "", "logical type")
 	id := flag.String("id", "", "logical ID")
 	gen := flag.String("generation", "", "exact generation from inspection")
@@ -35,6 +37,9 @@ func run() error {
 	audit := flag.String("audit", "", "durable local audit path, required with -apply")
 	creds := flag.String("creds", "", "NATS credentials file")
 	flag.Parse()
+	if _, err := naming.New(*namespace); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	opts := []nats.Option{nats.NoReconnect(), nats.ReconnectBufSize(-1), nats.UseOldRequestStyle(), nats.Timeout(2 * time.Second)}
@@ -46,7 +51,7 @@ func run() error {
 		return err
 	}
 	defer nc.Close()
-	s, err := recovery.Inspect(ctx, nc, recovery.Key{Type: *typ, ID: *id})
+	s, err := recovery.Inspect(ctx, nc, *namespace, recovery.Key{Type: *typ, ID: *id})
 	if err != nil {
 		return err
 	}
@@ -74,7 +79,7 @@ func run() error {
 	}
 	s.Generation = *gen
 	s.Revision = *rev
-	if err = recovery.Apply(ctx, nc, s, *stopped, *reason, durableAudit{f}); err != nil {
+	if err = recovery.Apply(ctx, nc, *namespace, s, *stopped, *reason, durableAudit{f}); err != nil {
 		return err
 	}
 	fmt.Fprintln(os.Stdout, "recovery complete; see audit for Exit evidence or released-without-exit")

@@ -13,46 +13,44 @@ import (
 
 	"github.com/go-aie/actorx"
 	"github.com/go-aie/actorx-dist/internal/identity"
+	"github.com/go-aie/actorx-dist/internal/naming"
 	"github.com/go-aie/actorx-dist/internal/strictjson"
 	"github.com/nats-io/nats.go"
 )
 
-const (
-	typesBucket   = "AD_TYPES_V1"
-	currentBucket = "AD_ACTIVATIONS_V1"
-	exitsBucket   = "AD_EXITS_V1"
-)
-
-var bucketConfigs = []nats.KeyValueConfig{
-	{
-		Bucket:       typesBucket,
-		MaxValueSize: 64 << 10,
-		MaxBytes:     16 << 20,
-		History:      1,
-		Storage:      nats.FileStorage,
-		Replicas:     1,
-	},
-	{
-		Bucket:       currentBucket,
-		MaxValueSize: 16 << 10,
-		MaxBytes:     128 << 20,
-		History:      1,
-		Storage:      nats.FileStorage,
-		Replicas:     1,
-	},
-	{
-		Bucket:       exitsBucket,
-		MaxValueSize: 16 << 10,
-		MaxBytes:     128 << 20,
-		History:      1,
-		Storage:      nats.FileStorage,
-		Replicas:     1,
-	},
+func (r *registry) bucketConfigs() []nats.KeyValueConfig {
+	return []nats.KeyValueConfig{
+		{
+			Bucket:       r.names.TypesBucket,
+			MaxValueSize: 64 << 10,
+			MaxBytes:     16 << 20,
+			History:      1,
+			Storage:      nats.FileStorage,
+			Replicas:     1,
+		},
+		{
+			Bucket:       r.names.CurrentBucket,
+			MaxValueSize: 16 << 10,
+			MaxBytes:     128 << 20,
+			History:      1,
+			Storage:      nats.FileStorage,
+			Replicas:     1,
+		},
+		{
+			Bucket:       r.names.ExitsBucket,
+			MaxValueSize: 16 << 10,
+			MaxBytes:     128 << 20,
+			History:      1,
+			Storage:      nats.FileStorage,
+			Replicas:     1,
+		},
+	}
 }
 
 // registry is an ordinary component. Callers already own a bounded worker.
 // Each operation owns one SDK slot and a fresh context-bound JS/KV handle.
 type registry struct {
+	names    naming.Names
 	nc       *nats.Conn
 	ordinary chan struct{}
 	all      chan struct{}
@@ -67,8 +65,8 @@ type registry struct {
 	recordFault func(stage, bucket, key string, data []byte) // process-crash tests only
 }
 
-func newRegistry(nc *nats.Conn) *registry {
-	return &registry{nc: nc, ordinary: make(chan struct{}, 6), all: make(chan struct{}, 8)}
+func newRegistry(nc *nats.Conn, names naming.Names) *registry {
+	return &registry{names: names, nc: nc, ordinary: make(chan struct{}, 6), all: make(chan struct{}, 8)}
 }
 
 func (r *registry) io(ctx context.Context, control bool, work func(nats.JetStreamContext) error) error {
@@ -110,7 +108,7 @@ func currentKey(key ActorKey) string {
 }
 
 func (r *registry) initialize(ctx context.Context) error {
-	for _, cfg := range bucketConfigs {
+	for _, cfg := range r.bucketConfigs() {
 		err := r.io(ctx, true, func(js nats.JetStreamContext) error {
 			info, err := js.StreamInfo(streamName(cfg.Bucket))
 			if errors.Is(err, nats.ErrStreamNotFound) {
@@ -192,7 +190,7 @@ func (r *registry) get(ctx context.Context, bucket, key string, control bool) (n
 
 func (r *registry) write(ctx context.Context, bucket, key string, data []byte, revision uint64, control bool) (uint64, error) {
 	max := 16 << 10
-	if bucket == typesBucket {
+	if bucket == r.names.TypesBucket {
 		max = 64 << 10
 	}
 	if len(data) > max {
@@ -244,10 +242,10 @@ func (r *registry) writeVerified(ctx context.Context, bucket, key string, data [
 
 func (r *registry) capacity(ctx context.Context, types bool) error {
 	return r.io(ctx, false, func(js nats.JetStreamContext) error {
-		buckets := []string{currentBucket, exitsBucket}
+		buckets := []string{r.names.CurrentBucket, r.names.ExitsBucket}
 		percent := uint64(70)
 		if types {
-			buckets = []string{typesBucket}
+			buckets = []string{r.names.TypesBucket}
 			percent = 90
 		}
 		for _, bucket := range buckets {
@@ -272,7 +270,7 @@ func (r *registry) capacity(ctx context.Context, types bool) error {
 
 func (r *registry) publishType(ctx context.Context, name string, c wireContract) error {
 	key := "t." + identity.Token(name)
-	existing, err := r.get(ctx, typesBucket, key, false)
+	existing, err := r.get(ctx, r.names.TypesBucket, key, false)
 	if err == nil {
 		if !bytes.Equal(existing.Value(), c.data) {
 			return ErrContract
@@ -285,9 +283,9 @@ func (r *registry) publishType(ctx context.Context, name string, c wireContract)
 	if err = r.capacity(ctx, true); err != nil {
 		return err
 	}
-	_, err = r.writeVerified(ctx, typesBucket, key, c.data, 0, false)
+	_, err = r.writeVerified(ctx, r.names.TypesBucket, key, c.data, 0, false)
 	if err != nil {
-		existing, readErr := r.get(ctx, typesBucket, key, false)
+		existing, readErr := r.get(ctx, r.names.TypesBucket, key, false)
 		if readErr == nil {
 			if bytes.Equal(existing.Value(), c.data) {
 				return nil
@@ -352,7 +350,7 @@ func decodeRecord(data []byte, out any) error {
 }
 
 func (r *registry) owner(ctx context.Context, key ActorKey) (owned, error) {
-	entry, err := r.get(ctx, currentBucket, currentKey(key), true)
+	entry, err := r.get(ctx, r.names.CurrentBucket, currentKey(key), true)
 	if err != nil {
 		return owned{}, err
 	}
@@ -380,7 +378,7 @@ func (r *registry) claim(ctx context.Context, v ownership, previous *owned) (own
 		return owned{}, err
 	}
 	data, _ := json.Marshal(v)
-	rev, err := r.writeVerified(ctx, currentBucket, currentKey(v.Key), data, expected, false)
+	rev, err := r.writeVerified(ctx, r.names.CurrentBucket, currentKey(v.Key), data, expected, false)
 	if err != nil {
 		return owned{}, errors.Join(ErrActivationUnknown, err)
 	}
@@ -414,7 +412,7 @@ func (r *registry) change(ctx context.Context, old owned, next ownership) (owned
 	}
 
 	data, _ := json.Marshal(next)
-	rev, err := r.writeVerified(ctx, currentBucket, currentKey(next.Key), data, old.revision, true)
+	rev, err := r.writeVerified(ctx, r.names.CurrentBucket, currentKey(next.Key), data, old.revision, true)
 	if err != nil {
 		return owned{}, errors.Join(ErrActivationUnknown, err)
 	}

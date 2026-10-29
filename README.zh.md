@@ -123,4 +123,4 @@ go run ./examples/counter -role client -id orders-42
 | [部署指南](docs/deployment.zh.md) | 配置、权限、契约升级与显式恢复。 |
 | [跨语言接入](remote/README.zh.md) | HTTP/SSE Call/Stream、Python provider/consumer 与 remote 协议。 |
 
-实现细节见[架构](docs/architecture.zh.md)、[wire 契约与资源限制](docs/contract.zh.md)和 [Registry 协议](docs/registry.zh.md)。
+实现细节见[架构](docs/architecture.zh.md)、[wire 契约与资源限制](docs/contract.zh.md)、[Registry 协议](docs/registry.zh.md)，以及说明 namespace、subject 和权限的 [NATS 技术参考](docs/nats.zh.md)。

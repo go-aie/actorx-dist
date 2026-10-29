@@ -336,7 +336,7 @@ func (n *network) startActivation(e *creation, spec registration) (local actorx.
 		return local, actorx.ErrSetup
 	}
 	receiver := &businessTarget{key: e.key, generation: e.generation, coreID: target.ID, spec: spec, work: w}
-	w.sub, err = n.nc.Subscribe(actorSubject(e.key), n.businessCallback(receiver))
+	w.sub, err = n.nc.Subscribe(n.actorSubject(e.key), n.businessCallback(receiver))
 	if err == nil {
 		err = w.sub.SetPendingLimits(2, 256<<10)
 	}
@@ -368,9 +368,8 @@ func (n *network) startActivation(e *creation, spec registration) (local actorx.
 	}
 }
 
-// Keep the v1 wire namespace stable across Go module/package renames.
-func actorSubject(key ActorKey) string {
-	return "actord.actor." + identity.Token(key.Type) + "." + identity.Token(key.ID)
+func (n *network) actorSubject(key ActorKey) string {
+	return n.rt.names.ActorSubject(key.Type, key.ID)
 }
 
 func (n *network) transition(ctx context.Context, e *creation, state string) (owned, error) {
@@ -719,7 +718,7 @@ func (addr Addr) resolve(ctx context.Context) (owned, error) {
 			defer stop()
 			o, err := addr.rt.net.lookup(attempt, addr.key)
 			if errors.Is(err, ErrNotActivated) {
-				entry, readErr := addr.rt.net.registry.get(attempt, typesBucket, "t."+identity.Token(addr.key.Type), false)
+				entry, readErr := addr.rt.net.registry.get(attempt, addr.rt.net.registry.names.TypesBucket, "t."+identity.Token(addr.key.Type), false)
 				if readErr != nil {
 					err = errors.Join(ErrTypeUnavailable, readErr)
 				} else {

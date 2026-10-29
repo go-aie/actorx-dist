@@ -8,11 +8,13 @@ This reference describes current ownership, terminal and maintenance protocols a
 
 Use NATS Core for nonpersistent business messages and file-backed JetStream KV for metadata. No mirrors, sources, republish, compression or external domains. Development server max_payload=131072 bytes, file limit=512 MiB, memory limit=64 MiB; dedicated account storage limit=384 MiB, at least 3 streams and 8 consumers allowed. No unrelated users consume this account's headroom. Replicas=1 is the local baseline; replicated deployments require separate validation.
 
+The table uses the default namespace, `default`. A custom namespace changes all three bucket/stream names while preserving keys and record formats; see the [NATS reference](nats.md). Account storage usage and quotas remain shared across namespaces.
+
 | KV bucket / backing stream | Key | MaxValueSize / MaxBytes | History / TTL / replicas |
 | --- | --- | --- | --- |
-| AD_TYPES_V1 / KV_AD_TYPES_V1 | t.<type-token> | 65536 /16 MiB | 1 /0 /1 |
-| AD_ACTIVATIONS_V1 / KV_AD_ACTIVATIONS_V1 | a.<type-token>.<id-token> | 16384 /128 MiB | 1 /0 /1 |
-| AD_EXITS_V1 / KV_AD_EXITS_V1 | e.<generation> | 16384 /128 MiB | 1 /0 /1 |
+| actorxdist_default_types_v1 / KV_actorxdist_default_types_v1 | t.<type-token> | 65536 /16 MiB | 1 /0 /1 |
+| actorxdist_default_activations_v1 / KV_actorxdist_default_activations_v1 | a.<type-token>.<id-token> | 16384 /128 MiB | 1 /0 /1 |
+| actorxdist_default_exits_v1 / KV_actorxdist_default_exits_v1 | e.<generation> | 16384 /128 MiB | 1 /0 /1 |
 
 Validate KeyValueConfig and StreamInfo on startup: file storage, DiscardNew, MaxMsgsPerSubject=1, MaxAge=0, AllowRollup=true, DenyDelete=true, DenyPurge=false, expected subjects, sizes/replicas, no stream transforms or mirrors. Bucket creation is idempotent; inspect actual config instead of accepting a same-name bucket. Never silently mutate a mismatched deployment. Type contracts never expire. Exit retention is 24 hours after COMMITTED/RELEASED, using the server creation time of that committed revision; FAILED_HELD and PREPARED have no age eviction. Client/server clocks use the wire baseline's ±250ms assumption, and maintenance waits an extra 500ms before age eligibility. No bucket-wide TTL is used.
 
@@ -62,7 +64,7 @@ There is intentionally no multi-key transaction or promise of successful Wait at
 
 ## Conditional cleanup and physical reclamation
 
-For an INACTIVE candidate read key/gen/revision r and its exact COMMITTED/RELEASED terminal first. Then `current.Delete(a,nats.LastRevision(r))`. Success writes a tombstone, not a physical purge. Conflict abandons the candidate. On lost acknowledgement, bounded Get of latest: same candidate retries with original r only; missing/new generation stops modification. For raw tombstone evidence use `js.GetLastMsg("KV_AD_ACTIVATIONS_V1","$KV.AD_ACTIVATIONS_V1."+a)` and inspect Sequence, Subject and KV-Operation header; KV.Get/GetRevision intentionally hide deletion markers.
+For an INACTIVE candidate read key/gen/revision r and its exact COMMITTED/RELEASED terminal first. Then `current.Delete(a,nats.LastRevision(r))`. Success writes a tombstone, not a physical purge. Conflict abandons the candidate. On lost acknowledgement, bounded Get of latest: same candidate retries with original r only; missing/new generation stops modification. For raw tombstone evidence use `js.GetLastMsg("KV_actorxdist_default_activations_v1","$KV.actorxdist_default_activations_v1."+a)` and inspect Sequence, Subject and KV-Operation header; KV.Get/GetRevision intentionally hide deletion markers.
 
 A sequence scanner reads `js.StreamInfo(stream)` FirstSeq/LastSeq then at most 64 `js.GetMsg(stream,seq)` positions per second, with deadlines and skipped holes. It holds ≤32 candidates, wraps its cursor for another pass and does not accumulate all keys or create watch consumers. Validate raw subject, operation and record size before treating a frame as a candidate. There is one scanner per worker Runtime and none on pure callers. A candidate is always reread before mutation; restart may safely rescan.
 

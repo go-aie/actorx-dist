@@ -97,7 +97,7 @@ func sameTerminal(a, b terminal) bool {
 }
 
 func (r *registry) exit(ctx context.Context, key ActorKey, generation string) (terminalEntry, error) {
-	entry, err := r.get(ctx, exitsBucket, "e."+generation, true)
+	entry, err := r.get(ctx, r.names.ExitsBucket, "e."+generation, true)
 	if err != nil {
 		return terminalEntry{}, errors.Join(ErrExitUnknown, err)
 	}
@@ -114,7 +114,7 @@ func (r *registry) prepare(ctx context.Context, v terminal) (terminalEntry, erro
 	}
 	key := "e." + v.Generation
 	data, _ := json.Marshal(v)
-	rev, err := r.writeVerified(ctx, exitsBucket, key, data, 0, true)
+	rev, err := r.writeVerified(ctx, r.names.ExitsBucket, key, data, 0, true)
 	if err != nil {
 		existing, readErr := r.exit(ctx, v.Key, v.Generation)
 		if errors.Is(readErr, ErrProtocol) {
@@ -230,7 +230,7 @@ func (r *registry) commit(ctx context.Context, previous terminalEntry, next term
 		return terminalEntry{}, ErrProtocol
 	}
 	data, _ := json.Marshal(next)
-	rev, err := r.writeVerified(ctx, exitsBucket, "e."+next.Generation, data, previous.revision, true)
+	rev, err := r.writeVerified(ctx, r.names.ExitsBucket, "e."+next.Generation, data, previous.revision, true)
 	if err != nil {
 		return terminalEntry{}, errors.Join(ErrExitUnknown, err)
 	}

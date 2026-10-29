@@ -4,6 +4,23 @@
 
 Send/Call/Stream 都按同一顺序执行：**核对契约 → 选定并固定代次 → 等待 READY → 经 NATS 投递**。目标通过 actorx mailbox 执行业务，同进程也走相同路径。地址模型见[核心概念](concepts.zh.md)。
 
+## Namespace 与部署隔离
+
+Namespace 用于区分共享 NATS account 内的多套部署，例如生产与测试环境。隔离范围包括 NATS subject、Factory queue group 和保存契约、激活归属及退出记录的 JetStream KV bucket；不改变 Actor Type 和 ID。
+
+创建 Runtime 时通过与 `WithNATS` 平级的 Option 配置，默认值为 `default`：
+
+```go
+rt, err := actorxdist.NewRuntime(ctx,
+    actorxdist.WithNATS(natsURL),
+    actorxdist.WithNamespace("prod"),
+)
+```
+
+Namespace 仅作用于当前 Runtime，创建后固定；重复配置以最后一次为准。名称为 1–64 个 ASCII 字符，匹配 `[a-z][a-z0-9_-]{0,63}`，不自动裁空格或转换大小写。显式空值和其他非法名称在连接前返回 actorx.ErrSetup。
+
+同一逻辑集群的 Runtime、Gateway 与恢复工具必须使用相同 namespace。命名隔离不替代 NATS account 的认证与权限隔离；完整名称、权限和配置说明见 [NATS 技术参考](nats.zh.md)。
+
 ## 注册与撤销
 
 启动时和运行期间均使用 Runtime 的同一注册方法：

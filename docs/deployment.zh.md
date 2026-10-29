@@ -45,11 +45,13 @@ Register 核对该 Type 的契约并等待入口就绪；失败时自动清理�
 
 ## 存储与权限
 
+同一 NATS account 内，相同 namespace 的 Runtime 共享消息路由和 KV bucket。独立部署使用不同 `WithNamespace` 值，默认值为 `default`；subject 清单及 JetStream API 权限范围见 [NATS 技术参考](nats.zh.md)。每个 namespace 使用三个 stream，多套部署需要相应提高账户 stream 数量与存储配额；上方示例仅容纳一套。
+
 通过 [WithExecutionLimits 和 WithTransportLimits](runtime.zh.md#容量配置) 配置单进程执行和网络容量。提高本地容量不会扩容以下 KV 桶或账户配额。
 
 Runtime 幂等创建三个 KV 桶，已有配置不兼容则报错，不自动修正。类型桶为16MiB/值64KiB；当前归属与终态桶各128MiB/值16KiB。全部文件存储、History=1、无 TTL、DiscardNew、副本数1。完整配置和保守证据规则见 [Registry 协议](registry.zh.md)。改变完整 wire 契约须使用新 Type；类型规范存在不表示 Factory 在线。
 
-权限应分别授予：JetStream 账户/stream 信息、所需 KV 的读取与条件写入、受序号限制的维护 purge、Factory 共享入口、专属控制入口和临时 inbox。`actord.factory.<type-token>.<factory-token>.control.confirm` 与 `.control.stop` 是不同发布权限；接收方使用普通 `control.*` 订阅，不使用 queue group。严格部署需要结合实际 Type/token 范围授权。Send/Call/Stream 调用方需要发布到 `actord.actor.<type-token>.<id-token>`，工作进程需要订阅其声明 Type 下的业务入口，双方需要发布回复及订阅自己的 `_INBOX.>`。Call/Stream 取消使用原业务 subject，不增加订阅或额外控制权限。
+权限应分别授予：JetStream 账户/stream 信息、所需 KV 的读取与条件写入、受序号限制的维护 purge、Factory 共享入口、专属控制入口和临时 inbox。`actorxdist.default.factory.<type-token>.<factory-token>.control.confirm` 与 `.control.stop` 是不同发布权限；接收方使用普通 `control.*` 订阅，不使用 queue group。严格部署需要结合实际 Type/token 范围授权。Send/Call/Stream 调用方需要发布到 `actorxdist.default.actor.<type-token>.<id-token>`，工作进程需要订阅其声明 Type 下的业务入口，双方需要发布回复及订阅自己的 `_INBOX.>`。Call/Stream 取消使用原业务 subject，不增加订阅或额外控制权限。
 
 连接和控制容量的精确上限见 [wire 资源表](contract.zh.md#时间及开发资源配置)。
 
@@ -70,7 +72,7 @@ go build -o /tmp/dist-recover ./cmd/dist-recover
 /tmp/dist-recover -nats nats://127.0.0.1:4222 -type counter -id orders-42
 ```
 
-检查输出中的 key、generation、factory、revision、current 及 terminal。确认旧进程隔离后，以本次检查的精确值执行；`-creds` 支持 NATS 凭据文件，TLS 可使用 tls:// URL 和系统信任配置：
+检查输出中的 namespace、key、generation、factory、revision、current 及 terminal。`-namespace` 默认为 `default`，自定义部署必须在检查和 apply 时都传入对应名称；快照和审计记录包含 namespace。确认旧进程隔离后，以本次检查的精确值执行；`-creds` 支持 NATS 凭据文件，TLS 可使用 tls:// URL 和系统信任配置：
 
 ```sh
 /tmp/dist-recover -nats nats://127.0.0.1:4222 \

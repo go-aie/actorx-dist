@@ -33,7 +33,7 @@ func TestRegistrationNATS(t *testing.T) {
 		defer hold.Store(false)
 		blocked := make(chan struct{}, 1)
 		worker.net.registry.writeFault = func(stage, bucket, _ string) error {
-			if stage == "before" && bucket == exitsBucket && hold.Load() {
+			if stage == "before" && bucket == testDefaultNames.ExitsBucket && hold.Load() {
 				select {
 				case blocked <- struct{}{}:
 				default:
@@ -87,7 +87,7 @@ func TestRegistrationNATS(t *testing.T) {
 		unblock := func() { once.Do(func() { close(release) }) }
 		defer unblock()
 		worker.net.registry.readFault = func(bucket, key string) error {
-			if bucket == typesBucket && key == "t."+identity.Token(typ) {
+			if bucket == testDefaultNames.TypesBucket && key == "t."+identity.Token(typ) {
 				enteredOnce.Do(func() { close(entered) })
 				<-release
 			}
@@ -136,7 +136,7 @@ func TestRegistrationNATS(t *testing.T) {
 		if _, err := old.Call[int](ctx, read{}); !errors.Is(err, actorx.ErrStopped) {
 			t.Fatal("retired address changed generations", err)
 		}
-		if _, err := worker.net.registry.get(ctx, typesBucket, "t."+identity.Token(typ), false); err != nil {
+		if _, err := worker.net.registry.get(ctx, testDefaultNames.TypesBucket, "t."+identity.Token(typ), false); err != nil {
 			t.Fatal("withdrawal removed immutable contract", err)
 		}
 		replacement, err := counterRegistration(typ)(ctx, worker)
@@ -228,7 +228,7 @@ func TestRegistrationNATS(t *testing.T) {
 		defer cancel()
 		var injected atomic.Bool
 		worker.net.registry.writeFault = func(stage, bucket, key string) error {
-			if stage == "after" && bucket == typesBucket && key == "t."+identity.Token(typ) && injected.CompareAndSwap(false, true) {
+			if stage == "after" && bucket == testDefaultNames.TypesBucket && key == "t."+identity.Token(typ) && injected.CompareAndSwap(false, true) {
 				cancel()
 				return context.Canceled
 			}
@@ -251,7 +251,7 @@ func TestRegistrationNATS(t *testing.T) {
 		// The same verified write path reconciles a durable write with a lost ACK.
 		lost := typ + "-ack"
 		worker.net.registry.writeFault = func(stage, bucket, key string) error {
-			if stage == "after" && bucket == typesBucket && key == "t."+identity.Token(lost) {
+			if stage == "after" && bucket == testDefaultNames.TypesBucket && key == "t."+identity.Token(lost) {
 				return context.DeadlineExceeded
 			}
 			return nil

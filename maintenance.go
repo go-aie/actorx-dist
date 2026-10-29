@@ -66,7 +66,7 @@ func (r *registry) cleanupCurrent(ctx context.Context, candidate owned) error {
 		p.value.ReleaseRevision != candidate.revision {
 		return ErrExitUnknown
 	}
-	return r.removeRevision(ctx, currentBucket, currentKey(v.Key), candidate.revision)
+	return r.removeRevision(ctx, r.names.CurrentBucket, currentKey(v.Key), candidate.revision)
 }
 
 func (r *registry) cleanupExit(ctx context.Context, p terminalEntry, created, timeNow time.Time) error {
@@ -88,7 +88,7 @@ func (r *registry) cleanupExit(ctx context.Context, p terminalEntry, created, ti
 	} else if err != nil && !errors.Is(err, nats.ErrKeyNotFound) {
 		return err
 	}
-	return r.removeRevision(ctx, exitsBucket, "e."+v.Generation, p.revision)
+	return r.removeRevision(ctx, r.names.ExitsBucket, "e."+v.Generation, p.revision)
 }
 
 // scanPage has no watch consumer and materializes at most 32 candidates. The
@@ -96,7 +96,7 @@ func (r *registry) cleanupExit(ctx context.Context, p terminalEntry, created, ti
 func (r *registry) scanPage(ctx context.Context, index int, now time.Time) error {
 	r.scanMu.Lock()
 	defer r.scanMu.Unlock()
-	bucket := []string{currentBucket, exitsBucket}[index]
+	bucket := []string{r.names.CurrentBucket, r.names.ExitsBucket}[index]
 	var info *nats.StreamInfo
 	if err := r.io(ctx, true, func(js nats.JetStreamContext) error {
 		var err error

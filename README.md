@@ -123,4 +123,4 @@ Each example uses the same NATS service and includes its own run instructions:
 | [Deployment](docs/deployment.md) | Configuration, permissions, contract upgrades and explicit recovery. |
 | [Cross-language access](remote/README.md) | HTTP/SSE Call/Stream, Python providers and consumers, and the remote protocol. |
 
-For implementation details, see [architecture](docs/architecture.md), [wire contract and limits](docs/contract.md), and the [Registry protocol](docs/registry.md).
+For implementation details, see [architecture](docs/architecture.md), [wire contract and limits](docs/contract.md), the [Registry protocol](docs/registry.md), and the [NATS reference](docs/nats.md) for namespaces, subjects and permissions.

@@ -183,7 +183,7 @@ func TestActivationAdmissionNATS(t *testing.T) {
 		// A standalone candidate lets the real handler call a blocked Factory
 		// without mutating a live registration's immutable Factory identity.
 		r := &Registration{spec: spec, token: token(t), factory: gate, ready: true}
-		n := &network{rt: &Runtime{registrations: map[string]*Registration{typ: r}}, nc: worker.net.nc}
+		n := &network{rt: &Runtime{names: worker.names, registrations: map[string]*Registration{typ: r}}, nc: worker.net.nc}
 		n.ready.resume(n.ready.epoch())
 		res := selectedActivationReply(t, n, r, "one", 100*time.Millisecond)
 		await(t, probe.entered)
@@ -202,14 +202,14 @@ func TestActivationAdmissionNATS(t *testing.T) {
 		defer hold.Store(false)
 		lost := make(chan struct{}, 1)
 		worker.net.registry.writeFault = func(stage, bucket, _ string) error {
-			if stage == "after" && bucket == currentBucket && written.CompareAndSwap(false, true) {
+			if stage == "after" && bucket == testDefaultNames.CurrentBucket && written.CompareAndSwap(false, true) {
 				lost <- struct{}{}
 				return context.DeadlineExceeded
 			}
 			return nil
 		}
 		worker.net.registry.readFault = func(bucket, _ string) error {
-			if bucket == currentBucket && written.Load() && hold.Load() {
+			if bucket == testDefaultNames.CurrentBucket && written.Load() && hold.Load() {
 				return context.DeadlineExceeded
 			}
 			return nil
@@ -265,7 +265,7 @@ func selectedActivationReply(t *testing.T, n *network, r *Registration, id strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	n.handle(incoming{msg: &nats.Msg{Subject: factorySubject(req.Type), Reply: reply, Data: data}, typ: req.Type, token: r.token, registration: r})
+	n.handle(incoming{msg: &nats.Msg{Subject: n.factorySubject(req.Type), Reply: reply, Data: data}, typ: req.Type, token: r.token, registration: r})
 	msg, err := sub.NextMsg(time.Second)
 	if err != nil {
 		t.Fatal(err)

@@ -10,9 +10,9 @@ Type is 1–64 ASCII bytes matching `[a-z][a-z0-9]*([.-][a-z0-9]+)*`. ID is 1–
 
 Type/ID segments use canonical RFC 4648 raw base64url of the original bytes. Strict decode rejects padding, ignored newlines and nonzero pad bits; decode/re-encode must match. `counter` → `Y291bnRlcg`, `orders-42` → `b3JkZXJzLTQy`. Opaque random tokens are already encoded, not encoded twice. KV keys are `t.<type-token>`, `a.<type-token>.<id-token>` and `e.<generation>` in the separate buckets. Errors during validation are ErrSetup. Tokens identify routes, never authority.
 
-Subjects are `actord.factory.<type-token>`, `actord.factory.<type-token>.<factory-token>.control.confirm`, `.control.stop` and `actord.actor.<type-token>.<id-token>`. The factory queue group is `actord.factory.<type-token>.workers`, not a publish destination. One ordinary `control.*` subscription per Factory spans all its generations and FAILED records, without a queue group. It is installed/flushed before any STARTING claim and removed only after all owned work settles. Business subscriptions are per active instance, without a queue group. Confirm/stop permissions are separate; neither falls back to a shared queue.
+Subjects are `actorxdist.default.factory.<type-token>`, `actorxdist.default.factory.<type-token>.<factory-token>.control.confirm`, `.control.stop` and `actorxdist.default.actor.<type-token>.<id-token>`. The factory queue group is `actorxdist.default.factory.<type-token>.workers`, not a publish destination. One ordinary `control.*` subscription per Factory spans all its generations and FAILED records, without a queue group. It is installed/flushed before any STARTING claim and removed only after all owned work settles. Business subscriptions are per active instance, without a queue group. Confirm/stop permissions are separate; neither falls back to a shared queue.
 
-The `actord.*` subject namespace is retained for wire compatibility. The Go module and package are `github.com/go-aie/actorx-dist` and `actorxdist`.
+These names use the default namespace, `default`. `WithNamespace` configures message routes, queue groups and KV buckets together. See the [NATS reference](nats.md) for complete names and configuration.
 
 ## Schema subset and fingerprint
 

@@ -57,7 +57,7 @@ func TestContractCacheNATS(t *testing.T) {
 					reads["t."+identity.Token(fmt.Sprintf("%s-%d", prefix, i))] = new(atomic.Int32)
 				}
 				client.net.registry.readFault = func(bucket, key string) error {
-					if bucket == typesBucket && reads[key] != nil {
+					if bucket == testDefaultNames.TypesBucket && reads[key] != nil {
 						reads[key].Add(1)
 					}
 					return nil
@@ -191,7 +191,7 @@ func TestContractCacheNATS(t *testing.T) {
 		defer unblock()
 		var reads atomic.Int32
 		client.net.registry.readFault = func(bucket, key string) error {
-			if bucket == typesBucket && key == "t."+identity.Token(typ) {
+			if bucket == testDefaultNames.TypesBucket && key == "t."+identity.Token(typ) {
 				reads.Add(1)
 				close(entered)
 				<-release

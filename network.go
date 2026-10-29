@@ -252,7 +252,7 @@ func (rt *Runtime) connect(ctx context.Context, opts nats.Options) error {
 		return fmt.Errorf("%w: server max_payload must be 131072", actorx.ErrSetup)
 	}
 
-	n.registry = newRegistry(nc)
+	n.registry = newRegistry(nc, rt.names)
 	if err = n.registry.initialize(ctx); err != nil {
 		return err
 	}
@@ -276,11 +276,10 @@ func (d *initDialer) Dial(network, address string) (net.Conn, error) {
 	return dialer.DialContext(ctx, network, address)
 }
 
-// Keep the v1 wire namespace stable across Go module/package renames.
-func factorySubject(typ string) string { return "actord.factory." + identity.Token(typ) }
+func (n *network) factorySubject(typ string) string { return n.rt.names.FactorySubject(typ) }
 
-func controlSubject(typ, token string) string {
-	return factorySubject(typ) + "." + token + ".control.*"
+func (n *network) controlSubject(typ, token string) string {
+	return n.rt.names.ControlSubject(typ, token)
 }
 
 func (n *network) subscribe(ctx context.Context) error {
@@ -529,7 +528,7 @@ func (n *network) handle(in incoming) {
 		if in.control {
 			if req.Factory != in.token ||
 				!opaque(req.Generation) ||
-				in.msg.Subject != strings.TrimSuffix(controlSubject(in.typ, in.token), "*")+req.Operation ||
+				in.msg.Subject != strings.TrimSuffix(n.controlSubject(in.typ, in.token), "*")+req.Operation ||
 				(req.Operation != "confirm" && req.Operation != "stop") {
 				err = ErrProtocol
 			}
@@ -691,7 +690,7 @@ func (n *network) verifyOwnership(ctx context.Context) error {
 	}
 	n.rt.mu.Unlock()
 	for name, spec := range specs {
-		entry, err := n.registry.get(ctx, typesBucket, "t."+identity.Token(name), true)
+		entry, err := n.registry.get(ctx, n.registry.names.TypesBucket, "t."+identity.Token(name), true)
 		if err != nil {
 			return err
 		}
@@ -733,7 +732,7 @@ func (n *network) installRegistration(ctx context.Context, r *Registration) erro
 		n.rt.mu.Unlock()
 		return actorx.ErrClosed
 	}
-	sub, err := n.nc.Subscribe(controlSubject(r.spec.name, r.token), n.callback(r, true))
+	sub, err := n.nc.Subscribe(n.controlSubject(r.spec.name, r.token), n.callback(r, true))
 	r.control = sub
 	n.rt.mu.Unlock()
 	if err != nil {
@@ -750,7 +749,7 @@ func (n *network) installRegistration(ctx context.Context, r *Registration) erro
 		n.rt.mu.Unlock()
 		return actorx.ErrClosed
 	}
-	subject := factorySubject(r.spec.name)
+	subject := n.factorySubject(r.spec.name)
 	sub, err = n.nc.QueueSubscribe(subject, subject+".workers", n.callback(r, false))
 	r.shared = sub
 	n.rt.mu.Unlock()

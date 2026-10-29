@@ -8,11 +8,13 @@
 
 NATS Core 传递不持久化的业务消息，文件型 JetStream KV 保存元数据。不使用 mirror、source、republish、压缩或外部 domain。开发 server max_payload=131072 字节、文件配额512 MiB、内存64 MiB；独立 account 存储配额384 MiB，至少允许3 stream、8 consumer，不让其他用户消耗该 account 余量。本地副本数1，复制部署须单独验证。
 
+下表使用默认 namespace `default`；自定义 namespace 同时改变三个 bucket 及 stream 名，key 与记录格式不变，见 [NATS 技术参考](nats.zh.md)。账户存储用量及配额仍由各 namespace 共用。
+
 | KV 桶/底层 stream | key | MaxValueSize / MaxBytes | History / TTL / replicas |
 | --- | --- | --- | --- |
-| AD_TYPES_V1 / KV_AD_TYPES_V1 | t.<type-token> | 65536 /16 MiB | 1 /0 /1 |
-| AD_ACTIVATIONS_V1 / KV_AD_ACTIVATIONS_V1 | a.<type-token>.<id-token> | 16384 /128 MiB | 1 /0 /1 |
-| AD_EXITS_V1 / KV_AD_EXITS_V1 | e.<generation> | 16384 /128 MiB | 1 /0 /1 |
+| actorxdist_default_types_v1 / KV_actorxdist_default_types_v1 | t.<type-token> | 65536 /16 MiB | 1 /0 /1 |
+| actorxdist_default_activations_v1 / KV_actorxdist_default_activations_v1 | a.<type-token>.<id-token> | 16384 /128 MiB | 1 /0 /1 |
+| actorxdist_default_exits_v1 / KV_actorxdist_default_exits_v1 | e.<generation> | 16384 /128 MiB | 1 /0 /1 |
 
 启动核对 KeyValueConfig 及 StreamInfo：文件存储、DiscardNew、MaxMsgsPerSubject=1、MaxAge=0、AllowRollup=true、DenyDelete=true、DenyPurge=false、预期 subject、尺寸/副本数，无 transform/mirror。建桶幂等，不能仅凭桶同名接受配置，不静默修改不兼容部署。类型规范永不过期。终态从 COMMITTED/RELEASED 版本的服务端创建时间起保留24小时，FAILED_HELD/PREPARED 不按年龄淘汰。沿用 wire 的 ±250ms 时钟假设，维护额外等待500ms再判过期，不设置统一 TTL。
 
@@ -62,7 +64,7 @@ READY 证明同步 Started 及订阅就绪，不证明异步业务就绪。普�
 
 ## 条件清理与物理回收
 
-对 INACTIVE 候选读取 key/gen/revision r，先核实精确 COMMITTED/RELEASED 终态，再 `current.Delete(a,nats.LastRevision(r))`。成功写入删除标记，不是物理回收。冲突放弃候选；丢确认后有界 Get 最新值，仍为同候选仅用原 r 重试，不存在/新代则不再修改。原始删除标记通过 `js.GetLastMsg("KV_AD_ACTIVATIONS_V1","$KV.AD_ACTIVATIONS_V1."+a)` 核对 Sequence、Subject、KV-Operation；KV.Get/GetRevision 会隐藏删除标记。
+对 INACTIVE 候选读取 key/gen/revision r，先核实精确 COMMITTED/RELEASED 终态，再 `current.Delete(a,nats.LastRevision(r))`。成功写入删除标记，不是物理回收。冲突放弃候选；丢确认后有界 Get 最新值，仍为同候选仅用原 r 重试，不存在/新代则不再修改。原始删除标记通过 `js.GetLastMsg("KV_actorxdist_default_activations_v1","$KV.actorxdist_default_activations_v1."+a)` 核对 Sequence、Subject、KV-Operation；KV.Get/GetRevision 会隐藏删除标记。
 
 序号 scanner 先 js.StreamInfo(stream) 得 FirstSeq/LastSeq，每秒最多64个 js.GetMsg(stream,seq) 位置，设 deadline、跳过空洞，仅保留32候选，游标回绕继续，不累积全部 key、不建 watch consumer。将原始消息当候选前核对 subject、operation、记录尺寸。每工作 Runtime 一个 scanner，纯调用方没有；变更前重新读取，重启可安全重扫。
 

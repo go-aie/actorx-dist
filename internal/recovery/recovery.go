@@ -13,18 +13,17 @@ import (
 
 	"github.com/go-aie/actorx-dist/internal/errwire"
 	"github.com/go-aie/actorx-dist/internal/identity"
+	"github.com/go-aie/actorx-dist/internal/naming"
 	"github.com/go-aie/actorx-dist/internal/strictjson"
 	"github.com/nats-io/nats.go"
 )
-
-const currentBucket = "AD_ACTIVATIONS_V1"
-const exitsBucket = "AD_EXITS_V1"
 
 // Key has the existing wire shape; this package does not define a business API.
 type Key struct{ Type, ID string }
 
 // Snapshot retains the observed generation, revision and records for an exact Apply.
 type Snapshot struct {
+	Namespace  string          `json:"namespace"`
 	Key        Key             `json:"key"`
 	Generation string          `json:"generation"`
 	Factory    string          `json:"factory"`
@@ -81,25 +80,29 @@ func opaque(s string) bool {
 
 func keyName(k Key) string { return "a." + identity.Token(k.Type) + "." + identity.Token(k.ID) }
 
-func handles(ctx context.Context, nc *nats.Conn) (nats.KeyValue, nats.KeyValue, error) {
+func handles(ctx context.Context, nc *nats.Conn, namespace string) (nats.KeyValue, nats.KeyValue, error) {
+	names, err := naming.New(namespace)
+	if err != nil {
+		return nil, nil, err
+	}
 	js, err := nc.JetStream(nats.Context(ctx))
 	if err != nil {
 		return nil, nil, err
 	}
-	c, err := js.KeyValue(currentBucket)
+	c, err := js.KeyValue(names.CurrentBucket)
 	if err != nil {
 		return nil, nil, err
 	}
-	e, err := js.KeyValue(exitsBucket)
+	e, err := js.KeyValue(names.ExitsBucket)
 	return c, e, err
 }
 
 // Inspect reads current ownership and any terminal evidence without modifying either.
-func Inspect(ctx context.Context, nc *nats.Conn, key Key) (Snapshot, error) {
+func Inspect(ctx context.Context, nc *nats.Conn, namespace string, key Key) (Snapshot, error) {
 	if identity.Validate(key.Type, key.ID) != nil {
 		return Snapshot{}, errors.New("invalid key")
 	}
-	c, e, err := handles(ctx, nc)
+	c, e, err := handles(ctx, nc, namespace)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -129,7 +132,14 @@ func Inspect(ctx context.Context, nc *nats.Conn, key Key) (Snapshot, error) {
 	default:
 		return Snapshot{}, errors.New("unsupported ownership state")
 	}
-	s := Snapshot{key, o.Generation, o.Factory, v.Revision(), append([]byte(nil), v.Value()...), nil}
+	s := Snapshot{
+		Namespace:  namespace,
+		Key:        key,
+		Generation: o.Generation,
+		Factory:    o.Factory,
+		Revision:   v.Revision(),
+		Current:    append([]byte(nil), v.Value()...),
+	}
 	p, err := e.Get("e." + o.Generation)
 	if err == nil {
 		s.Terminal = append([]byte(nil), p.Value()...)
@@ -183,11 +193,14 @@ func validTerminal(p terminal, s Snapshot) bool {
 // Apply requires an exact current revision AND the operator's process fence.
 // audit must be a durable append sink (the command fsyncs each event). The tool
 // writes intent before mutation; an uncertain result requires a fresh Inspect.
-func Apply(ctx context.Context, nc *nats.Conn, expected Snapshot, stopped bool, reason string, audit io.Writer) error {
+func Apply(ctx context.Context, nc *nats.Conn, namespace string, expected Snapshot, stopped bool, reason string, audit io.Writer) error {
+	if expected.Namespace != namespace {
+		return errors.New("recovery namespace mismatch; inspect the selected namespace again")
+	}
 	if !stopped || len(reason) == 0 || len(reason) > 960 || audit == nil || expected.Revision == 0 || !opaque(expected.Generation) {
 		return errors.New("recovery requires stopped-process evidence, reason, audit and exact generation/revision")
 	}
-	s, err := Inspect(ctx, nc, expected.Key)
+	s, err := Inspect(ctx, nc, namespace, expected.Key)
 	if err != nil {
 		return err
 	}
@@ -214,7 +227,7 @@ func Apply(ctx context.Context, nc *nats.Conn, expected Snapshot, stopped bool, 
 	if err = log("intent", nil); err != nil {
 		return err
 	}
-	c, e, err := handles(ctx, nc)
+	c, e, err := handles(ctx, nc, namespace)
 	if err != nil {
 		return err
 	}

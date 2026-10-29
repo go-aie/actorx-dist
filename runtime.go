@@ -9,16 +9,18 @@ import (
 	"time"
 
 	"github.com/go-aie/actorx"
+	"github.com/go-aie/actorx-dist/internal/naming"
 )
 
 type runtimeOptions struct {
+	namespace string
 	nats      natsConfig
 	localTest bool
 	execution ExecutionLimits
 	transport TransportLimits
 }
 
-// Option configures connection and resource limits before initialization.
+// Option configures namespace, connection and resource limits before initialization.
 type Option func(*runtimeOptions)
 
 // Runtime owns local execution, NATS subscriptions and a JetStream Registry.
@@ -30,6 +32,7 @@ type Runtime struct {
 	life        context.Context
 	cancel      context.CancelFunc
 	limits      runtimeLimits
+	names       naming.Names
 
 	business, management *actorx.Runtime
 	execution            *actorx.LocalChannel
@@ -65,12 +68,16 @@ func NewRuntime(initCtx context.Context, options ...Option) (*Runtime, error) {
 	initCtx, initCancel := context.WithTimeout(initCtx, 10*time.Second)
 	defer initCancel()
 
-	cfg := runtimeOptions{}
+	cfg := runtimeOptions{namespace: naming.DefaultNamespace}
 	for _, option := range options {
 		if option == nil {
 			return nil, actorx.ErrSetup
 		}
 		option(&cfg)
+	}
+	names, err := naming.New(cfg.namespace)
+	if err != nil {
+		return nil, err
 	}
 	limits, err := normalizeLimits(cfg.execution, cfg.transport)
 	if err != nil {
@@ -81,6 +88,7 @@ func NewRuntime(initCtx context.Context, options ...Option) (*Runtime, error) {
 		initialized:   true,
 		registrations: map[string]*Registration{},
 		limits:        limits,
+		names:         names,
 		specs:         map[string]registration{},
 		factories:     map[string]actorx.Addr{},
 		ledger:        map[string]*creation{},

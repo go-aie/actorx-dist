@@ -131,9 +131,9 @@ func (n *network) factoryRequest(
 	if err != nil {
 		return owned{}, err
 	}
-	subject := factorySubject(key.Type)
+	subject := n.factorySubject(key.Type)
 	if operation != "activate" {
-		subject = strings.TrimSuffix(controlSubject(key.Type, factory), "*") + operation
+		subject = strings.TrimSuffix(n.controlSubject(key.Type, factory), "*") + operation
 	}
 	if !n.nc.IsConnected() {
 		return owned{}, ErrOwnerUnavailable

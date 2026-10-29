@@ -249,7 +249,7 @@ func (n *network) invokeBusiness(
 			return nil, e
 		}
 	}
-	err = n.nc.PublishRequest(actorSubject(addr.key), reply, data)
+	err = n.nc.PublishRequest(n.actorSubject(addr.key), reply, data)
 	<-n.codecSlots
 	if err == nil && n.businessFault != nil {
 		err = n.businessFault("after_publish", f)
@@ -396,7 +396,7 @@ func (n *network) handleBusiness(in incoming) {
 	if f.Type != target.key.Type ||
 		f.ID != target.key.ID ||
 		f.Generation != target.generation ||
-		in.msg.Subject != actorSubject(target.key) ||
+		in.msg.Subject != n.actorSubject(target.key) ||
 		f.Reply != in.msg.Reply ||
 		!validBusinessReply(f.Reply, f.Correlation) {
 		return

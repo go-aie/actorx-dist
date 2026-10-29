@@ -492,5 +492,5 @@ func (n *network) cancelBusiness(f businessFrame, cause error) {
 	f.Payload = nil
 	f.Error, _ = errwire.Encode(cause, errwire.Source{Operation: "cancel", Type: f.Type, ID: f.ID, Generation: f.Generation})
 	data, _ := json.Marshal(f)
-	_ = n.nc.PublishRequest(actorSubject(ActorKey{f.Type, f.ID}), f.Reply, data)
+	_ = n.nc.PublishRequest(n.actorSubject(ActorKey{f.Type, f.ID}), f.Reply, data)
 }

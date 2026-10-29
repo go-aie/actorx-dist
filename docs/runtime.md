@@ -4,6 +4,23 @@ English | [中文](runtime.zh.md)
 
 Send/Call/Stream follow one path: **validate the contract → select and fix a generation → wait for READY → send through NATS**. The target runs business code through actorx mailboxes, including same-process calls. See [concepts](concepts.md) for the address model.
 
+## Namespace and deployment isolation
+
+A namespace distinguishes deployments sharing one NATS account, such as production and testing. Its scope includes NATS subjects, Factory queue groups and the JetStream KV buckets holding contracts, activation ownership and exit records; Actor Type and ID remain unchanged.
+
+Configure it when creating a Runtime, with an Option alongside `WithNATS`. The default is `default`:
+
+```go
+rt, err := actorxdist.NewRuntime(ctx,
+    actorxdist.WithNATS(natsURL),
+    actorxdist.WithNamespace("prod"),
+)
+```
+
+The namespace applies only to this Runtime and is fixed at creation; the last declaration wins. Names contain 1–64 ASCII characters matching `[a-z][a-z0-9_-]{0,63}`, without trimming or case conversion. Explicit empty or otherwise invalid names return actorx.ErrSetup before connecting.
+
+Runtimes, Gateways and recovery tools in one logical cluster must use the same namespace. Naming isolation does not replace NATS account authentication and permissions. See the [NATS reference](nats.md) for complete names, permissions and configuration.
+
 ## Registration and withdrawal
 
 Startup and later registration use the same Runtime method:
