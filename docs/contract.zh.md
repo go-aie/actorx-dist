@@ -36,11 +36,19 @@ subject 使用 `actorxdist.default.factory.<type-token>`、`actorxdist.default.f
 
 schema 节点固定为 JSON 数组：`["scalar",goKind]`、`["ptr",elementID]`、`["slice",elementID]`、`["array",N,elementID]`、`["map",elementID]`、`["struct",fields]`、`["addr-v1"]`。定义为 `[typeID,node]`，具名定义在具名 ID 下记录其底层节点；节点引用 typeID，不使用 reflect 指针。[]byte 使用 `["bytes"]`。无结果使用 null，不产生定义。
 
-指纹输入为紧凑 UTF-8 JSON 数组 `[1,handlers,definitions]`。handler 为 `[messageTypeID,resultTypeID-or-null,modes]`，modes 为 `["send","call"]` 或 `["stream"]`。handler 按 messageTypeID、定义按 typeID、字段按 JSON 名称逐字节排序；数组/标量顺序固定，使用 encoding/json 的字符串转义并启用 HTML 转义，无空白或末尾换行。对精确字节计算 SHA-256，输出 64 位小写 hex。生命周期绑定、函数、对象状态和构造函数地址不进入指纹。注册和真实绑定快照须完整相等，同 Type 仅一份不可变完整契约，新增 handler 也须新 Type。发现只读取已知 Type，不枚举类型、不证明有在线 Factory。
+指纹输入为紧凑 UTF-8 JSON 数组 `[1,handlers,definitions]`。handler 为 `[messageTypeID,resultTypeID-or-null,modes]`，modes 为 `["send","call"]` 或 `["stream"]`。handler 按 messageTypeID、定义按 typeID、字段按 JSON 名称逐字节排序；数组/标量顺序固定，使用 encoding/json 的字符串转义并启用 HTML 转义，无空白或末尾换行。对精确字节计算 SHA-256，输出 64 位小写 hex。生命周期绑定、函数、对象状态和构造函数地址不进入指纹。注册和真实绑定快照须完整相等，同 Type 仅一份不可变完整契约，新增 handler 也须新 Type。契约查询只读取已知 Type；Runtime.Discover 另行观察 ready 注册，不证明容量或未来可用性。
 
 codec 拒绝重复/未知 JSON 字段、非法 UTF-8、尾随值、错误 null、类型/数值不符、值环、深度超过 32、值节点超过 8192、超过 256 个 schema 定义或 64 个普通 handler。契约最多 64 KiB。编码使用有限 writer 和有界遍历，不能先无限 Marshal 再检查。请求 payload/chunk 编码后最多 64 KiB，外帧最多 128 KiB。schema 遍历、codec 临时缓冲及嵌套 Addr 解码均须预留预算。
 
 发送方在发布前核对 msg、模式和 R/C 与完整规范；接收方在 mailbox 前核对指纹、key/generation、消息/schema 和模式。内部 Call[any]/Stream[any] 桥接不能绕过检查。Addr 导出在 state 锁内取一致快照，默认 UnmarshalJSON 返回 ErrSetup，Runtime.DecodeAddr 严格解码且无 I/O。Send/Call/Stream 均已落实这些检查。
+
+## 内部发现传输
+
+发现使用独立的 v1 JSON 帧，不使用业务信封或单响应 Call 关联表。query 最多 1 KiB，必需 `version=1`、`query_id`、`origin_runtime_id` 和正整数 `deadline_unix_ms`（Unix 毫秒）；两个 ID 遵循 22 字符 opaque 身份规则。NATS Reply 必须精确等于 `actorxdist.<namespace>.discovery.v1.reply.<origin_runtime_id>`，广播 subject 为 `actorxdist.<namespace>.discovery.v1.query`。
+
+reply 必需 `version=1`、`query_id`、`runtime_id`；可选 `entries` 包含 `{type,fingerprint,description?}`，可选 `truncated` 表示省略了后缀。Description 须为有效 UTF-8、最多 512 字节；Type、fingerprint 遵循上文规则，拒绝重复 Type。空目录以无 entries 的成功回复表达。可选 `error` 只允许 `full` 或 `unavailable`，此时不得出现 entries 或 truncated。严格解码拒绝重复/未知字段、null、错误类型、非法身份和超限帧。每条回复最多 256 项，**包含 QueryID 的完整编码帧最多 64 KiB**；编码超限时保留前缀并设置 truncated。
+
+query callback 使用共享普通分派及 payload 槽；快照 Call 使用本地 Discovery Actor 的 Task 预算。reply callback 预留 payload/codec 槽并投递 typed 消息到该 Actor。本地回复丢失（包含 SDK slow-consumer 丢失）推进一个共享接收失败序号。连接故障使 transport epoch 失效并关闭已捕获的通知信号，重连校验后才允许新 epoch。传输层没有查询表或 collector。Close 撤销两个端点，汇合已进入 callback 及 dispatch，随后由 management 汇合快照 Task。公开 Cluster 查询由 Actor 持有 QueryID 关联并按完整节点快照原子合并。取消、Runtime 关闭、接收失败与 epoch 失效优先于成功完成；迟到回复不会重建查询。
 
 ## 统一信封
 
@@ -72,13 +80,13 @@ message 最多 512 UTF-8 字节；最多 4 个 source，每项 operation≤32、
 
 默认请求 5s，最长总请求 60s，控制/Flush 2s，KV 单次 1s，initCtx 无更早期限时初始化 10s。本地单调时间预算贯穿契约读取、选代、激活及通信，不逐阶段重置。wire deadline 为 UTC Unix 纳秒，并受本地开始+60s 限制。受支持主机时钟同步误差在 ±250ms 内；接收端取 min(wire deadline−当前墙钟,60s)，不为偏差延长期限。偏差可能提前拒绝，不授权归属或证明未执行，超出假设须另行验证。
 
-管理方持有创建寿命，构造/启动 30s 后请求取消；New/Started 不返回仍占原 token。KV/confirm 每批最多尝试 3 次，受调用/阶段总期限限制，20/40/80ms 有界退避。取得归属后的清理/提交每代保留一个 token，按 1、2、4…30s 间隔重试，每批最多 3 次 KV 操作，直到证据完整或显式恢复；最后等待者离开不终止管理，不每次重试新增 goroutine。Go 取消不能强制终止应用回调/构造函数。
+管理方持有创建寿命，构造/启动 30s 后请求取消；New/Started 不返回仍占原 token。KV 每批最多尝试 3 次，受调用/阶段总期限限制，20/40/80ms 有界退避。同代 owner 确认遇到 CAS 冲突时，在调用方期限及内部 2s 上限内重试；其他失败在总尝试次数达到第三次时停止。取得归属后的清理/提交每代保留一个 token，按 1、2、4…30s 间隔重试，每批最多 3 次 KV 操作，直到证据完整或显式恢复；最后等待者离开不终止管理，不每次重试新增 goroutine。Go 取消不能强制终止应用回调/构造函数。
 
 下表列出默认开发配置。公开执行/网络参数及含义见[容量配置](runtime.zh.md#容量配置)，其他协议、存储及管理限制继续由内部管理。
 
 自定义配置中，记 I=Instances、R=Requests、S=Streams。执行实例与所属激活各自最多 I 个，每 Actor 的 mailbox/pending/tasks 使用配置值。业务核心调用关联、出站请求、入站关联、共享回复关联及解析工作分别最多 R 个；Send ACK 等待最多 ceil(R/2)，解析/Wait 等待者总计最多 max(256,2R)，每地址 state 仍最多16个。入站/出站流共享 S 个额度，窗口合计预留 S×4 项 / S×64 KiB。
 
-内部业务分派队列和保留 payload 各使用 max(32,ceil(R/4)) 个槽，控制队列使用 max(64,ceil(R/2)) 个槽。两个 Runtime inbox 订阅各允许 max(8,ceil(R/16),ceil(S/2)) 个待处理帧，每帧最多128 KiB。记 T 为本 Runtime 已注册 Type 数，C=Creating、K=CreatingPerType。应用订阅合计最多 I+2T+2 个。Factory 任务容量 W=max(8,min(C,K,I)+4)，mailbox=max(64,2W)、pending=max(128,2W)、调用关联=max(64,C)，额外任务槽保留控制/清理余量。Types 可选限制 T，默认不限制数量。Registry 容量及 worker 数不自动增加；负数及槽/字节预算算术溢出在 I/O 前拒绝。
+内部业务分派队列和保留 payload 各使用 max(32,ceil(R/4)) 个槽，控制队列使用 max(64,ceil(R/2)) 个槽。每个业务订阅和两个延迟 Call/Stream inbox 订阅各允许 max(8,ceil(R/16),ceil(S/2)) 个待处理帧，每帧最多128 KiB。记 T 为本 Runtime 已注册 Type 数，C=Creating、K=CreatingPerType。两个常驻发现订阅使用相同 pending 帧数，query/reply 每帧分别限 1/64 KiB。应用订阅合计最多 I+2T+4 个。Factory 任务容量 W=max(8,min(C,K,I)+4)，mailbox=max(64,2W)、pending=max(128,2W)、调用关联=max(64,C)，额外任务槽保留控制/清理余量。Types 可选限制 T，默认不限制数量。Registry 容量及 worker 数不自动增加；负数及槽/字节预算算术溢出在 I/O 前拒绝。
 
 记 H=ContractCacheTypes（默认64）。调用方缓存最多保留 H 个 Type 索引和 H 份不同契约，单份≤64 KiB；指纹相同还须完整字节比较一致才能共享规范字节。因此驻留规范字节≤H×64 KiB（默认4 MiB，H=1024 时为64 MiB）。该上限不含 Type 字符串、map/list/对象开销、SDK 读取缓冲和在途快照，不是 Runtime 总内存限制或独立字节配额。条目按需增长，不按 H 预分配全部契约。miss 沿用请求/payload/codec 及 Registry I/O 预算，Registry 读取在缓存锁外执行；读取失败不缓存，冲突回填返回 ErrContract。
 
@@ -87,12 +95,13 @@ message 最多 512 UTF-8 字节；最多 4 个 source，每项 operation≤32、
 | 类型声明/Factory | Types 可选限制本地声明数（默认不限），64 handler/Type，256 schema 定义/契约，64 KiB/契约 | 本地注册槽→Unregister/Close 结清，已发布契约保留；无效/重复注册 ErrSetup，Type 配额 ErrFull |
 | 调用方契约缓存/network | ContractCacheTypes 个 Type 索引（默认64），共享契约数≤Type 数，驻留规范字节≤H×64 KiB（默认4 MiB），不含开销和在途快照 | miss→LRU 淘汰或工作结清后的 Close；命中刷新顺序，满时淘汰一个 Type，最后缓存引用移除时回收共享字节；项数已满本身不返回 ErrFull |
 | 业务引擎/核心 | 64 个业务实例；另独立计数最多64个所属激活，含构造、运行、FAILED、待提交；每实例 mailbox16、pending32、worker4；calls128；本地流 8×64 KiB 外加活动 chunk | 按实际归属预留，执行/清理结清才释放；复用核心 ErrFull |
-| 管理引擎/核心 | T 个 Factory，mailbox/pending/tasks 按上文推导（默认每个 64/128/8）；calls=max(64,C)；流 1×4 KiB 外加活动 chunk | 与业务引擎独立，保持到提交结清；工作开始前 ErrFull |
+| 管理引擎/核心 | T 个 Factory 加一个本地 Discovery Actor，mailbox/pending/tasks 按上文推导（默认每个 64/128/8）；calls=max(64,C)；流 1×4 KiB 外加活动 chunk | 与业务引擎独立；Discovery 独立预留实例，不占用户 Types；保持到提交结清，工作开始前 ErrFull |
+| 本地发现快照/Discovery Actor | 每个任务最多保留 256 项、64 KiB 编码快照数据；共享该管理 Actor 的任务及完成预算 | 扫描 ready 注册→串行完成或丢弃；条目/字节超限保留排序前缀，Truncated=true、EndReason=limit；取消或失败返回零值报告 |
 | Runtime 激活账本 | Creating 个并发创建（默认16），每 Type 最多 CreatingPerType 个（默认4）；属于 64 代预算子集 | CAS/New 前预留→提交/接管或完整回滚；FAILED 保留代槽，claim 前 ErrFull |
 | 解析等待者/Addr 与 Runtime | 每 state16，总计256 | 加入解析前→自己的取消/结果；工作不随等待者结束；ErrFull |
 | 本地子实例/业务引擎 | 与逻辑实例共享 64 个在用实例槽，与持久代槽分开 | 普通本地 Spawn 的 Bind 前预留→核心完整退出；使用已有 Channel 接缝，不能成为无界旁路 |
 | 网络关联/Runtime | 出站≤128，Send ACK 子集≤64；入站业务关联≤128；共享回复关联≤128 | 发布/分派前→网络结清且回调退出；有效识别时 ErrFull，不从 SDK 丢帧推定未执行 |
-| 应用订阅/Runtime | ≤I+2T+2：共享T、专属T、业务I、inbox2；业务各 pending2 帧/256 KiB，Factory 订阅各8 帧/1 MiB；默认执行/网络配置下累计144+16T 帧 / (18+2T) MiB | subscribe 前→退订并等待已进入回调；SDK 丢失为异步故障/可能结果未知 |
+| 应用订阅/Runtime | ≤I+2T+4：共享T、专属T、业务I、延迟 inbox2、发现2；业务各 pending8 帧/1 MiB，Factory 订阅各8 帧/1 MiB；默认执行/网络配置下累计544+16T 帧 / ((66+2T) MiB + 520 KiB) | subscribe 前→退订并等待已进入回调；SDK 丢失为异步故障/可能结果未知 |
 | SDK Registry 请求/Runtime | 总并发8（普通≤6，控制/提交预留2）；强制 UseOldRequestStyle，临时订阅≤8，每个 channel8；≤64 帧/8 MiB | 显式 context 的 SDK 调用前→返回/退订；不进入应用关联表 |
 | 网络分派 | 业务队列32 帧/4 MiB、8 worker；控制/取消队列64 帧/8 MiB、4 worker | 复制帧入队前计费→分派返回；有效识别的满载 ErrFull，不按消息创建 goroutine |
 | codec/Runtime | 编解码并发槽8，各≤128 KiB 输入+128 KiB 输出，共2 MiB；深度32/节点8192 | 遍历/复制前→交给其他已计费持有者或丢弃；ErrFull/ErrChunkSize |
@@ -102,7 +111,7 @@ message 最多 512 UTF-8 字节；最多 4 个 source，每项 operation≤32、
 | 提交/控制任务/Runtime | 使用已有64 代条目，每代最多1 工作，保留管理/控制队列及2 个 SDK 槽 | 清理开始→核实提交/释放，不因满载丢弃证据 |
 | 诊断/Runtime | 非阻塞64 事件，各≤1 KiB，溢出合并计数 | 回调→排空/关闭，不在 SDK 线程执行任意用户回调 |
 
-默认执行/网络配置、注册 T 个 Type 时，两个核心引擎合计最多 1024+64T mailbox 槽、2048+128T pending、256+8T worker、192 调用关联，再受较小网络/受理限制约束。应用代码保留的业务对象及 payload 引用不构成整个进程内存保证。SDK socket/parser、每个分派器在途帧及传输写缓冲另计：server max_payload=128 KiB，SDK 普通写缓冲32 KiB、重连缓冲禁用（该 SDK 用 -1；0 会恢复默认值）；decoder 无法撤销 SDK 已完成的分配。该配置以可信、按约配置的服务为前提。SDK 故障回调有界（含最多 Streams 条入站流的取消）、非阻塞，转交有界诊断；替换生命周期/错误控制的原始用户回调在 Option 规范化时拒绝。
+默认执行/网络配置、注册 T 个 Type 时，两个核心引擎合计最多 1088+64T mailbox 槽、2176+128T pending、264+8T worker、192 调用关联，再受较小网络/受理限制约束。应用代码保留的业务对象及 payload 引用不构成整个进程内存保证。SDK socket/parser、每个分派器在途帧及传输写缓冲另计：server max_payload=128 KiB，SDK 普通写缓冲32 KiB、重连缓冲禁用（该 SDK 用 -1；0 会恢复默认值）；decoder 无法撤销 SDK 已完成的分配。该配置以可信、按约配置的服务为前提。SDK 故障回调有界（含最多 Streams 条入站流的取消）、非阻塞，转交有界诊断；替换生命周期/错误控制的原始用户回调在 Option 规范化时拒绝。
 
 淘汰只释放缓存引用，在途调用继续持有不可变快照，无须固定 LRU 项；淘汰后重读可能与旧快照短暂并存。淘汰不删除 Registry 契约、不撤销注册、不停止 Actor、不改变代次。Close 等待已受理工作结清后清空缓存，并拒绝迟到回填。
 

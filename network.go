@@ -148,6 +148,7 @@ type incoming struct {
 	control      bool
 	business     *businessTarget
 	overloaded   bool
+	discovery    bool
 }
 
 type network struct {
@@ -186,6 +187,16 @@ type network struct {
 	businessFault func(string, businessFrame) error
 	codecSlots    chan struct{}
 	payloadSlots  chan struct{}
+
+	// Admission and callback joining share discoveryMu. The failure counter is
+	// a common receive-loss baseline, not per-query state.
+	discoveryMu        sync.Mutex
+	discoveryClosed    bool
+	discoveryCallbacks sync.WaitGroup
+	discoveryQueries   *nats.Subscription
+	discoveryReplies   *nats.Subscription
+	discoveryInbox     string
+	discoveryFailures  atomic.Uint64
 }
 
 func (n *network) report(op string, err error) {
@@ -235,9 +246,16 @@ func (rt *Runtime) connect(ctx context.Context, opts nats.Options) error {
 		n.interruptStreams()
 		n.report("closed", ErrOwnerUnavailable)
 	}
-	opts.AsyncErrorCB = func(_ *nats.Conn, _ *nats.Subscription, err error) {
+	opts.AsyncErrorCB = func(_ *nats.Conn, sub *nats.Subscription, err error) {
+		if sub != nil && sub.Subject == n.rt.names.DiscoveryReplySubject(n.rt.runtimeID) &&
+			errors.Is(err, nats.ErrSlowConsumer) {
+			n.discoveryReceiveFailure()
+		}
 		n.ready.Store(false)
 		n.interruptStreams()
+		if sub != nil {
+			err = fmt.Errorf("%w: subject %s", err, sub.Subject)
+		}
 		n.report("async", err)
 	}
 
@@ -285,7 +303,7 @@ func (n *network) controlSubject(typ, token string) string {
 func (n *network) subscribe(ctx context.Context) error {
 	epoch := n.ready.epoch()
 
-	if err := n.nc.FlushWithContext(ctx); err != nil {
+	if err := n.subscribeDiscovery(ctx); err != nil {
 		return err
 	}
 	if err := n.nc.LastError(); err != nil {
@@ -339,7 +357,9 @@ func (n *network) dispatch(queue <-chan incoming) {
 		case <-n.stop:
 			return
 		case in := <-queue:
-			if in.business != nil {
+			if in.discovery {
+				n.handleDiscovery(in)
+			} else if in.business != nil {
 				n.handleBusiness(in)
 			} else {
 				n.handle(in)
@@ -393,6 +413,7 @@ func (n *network) supervise() {
 
 func (n *network) closeAdmission() {
 	n.ready.Store(false)
+	n.closeDiscovery()
 	n.rt.mu.Lock()
 	defer n.rt.mu.Unlock()
 	for _, r := range n.rt.registrations {
@@ -406,6 +427,7 @@ func (n *network) closeAdmission() {
 // in-flight control completions. Control callbacks cannot enqueue afterwards.
 func (n *network) quiesce() {
 	n.quiesceOnce.Do(func() {
+		n.closeDiscovery()
 		n.rt.mu.Lock()
 		for _, r := range n.rt.registrations {
 			if r.control != nil {
@@ -440,7 +462,10 @@ func (n *network) close() {
 	// Synchronous unsubscribe plus the connection close drops queued SDK data.
 	for {
 		select {
-		case <-n.ordinary:
+		case in := <-n.ordinary:
+			if in.discovery {
+				<-n.payloadSlots
+			}
 		default:
 			goto control
 		}
@@ -660,9 +685,14 @@ func (f *factory) confirm(ctx actorx.Context, msg confirmRequest, reply actorx.R
 	return err
 }
 
-// A fault and a resume compete on one atomic word. A delayed reconnect cannot
-// overwrite a newer disconnect/slow-consumer event with a ready flag.
-type readiness struct{ state atomic.Uint64 }
+// A fault advances the epoch and closes its loss signal under the same lock.
+// A delayed reconnect cannot overwrite a newer fault; observe returns a matching
+// epoch/signal pair even if a disconnect and reconnect happen before it is used.
+type readiness struct {
+	state atomic.Uint64
+	mu    sync.Mutex
+	lost  chan struct{}
+}
 
 func (s *readiness) Load() bool { return s.state.Load()&1 != 0 }
 
@@ -670,17 +700,32 @@ func (s *readiness) Store(ready bool) {
 	if ready {
 		panic("use resume with an observed epoch")
 	}
-	for {
-		old := s.state.Load()
-		if s.state.CompareAndSwap(old, (old+2)&^1) {
-			return
-		}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.state.Load()
+	s.state.Store((old + 2) &^ 1)
+	if s.lost != nil {
+		close(s.lost)
+		s.lost = nil
 	}
 }
 
 func (s *readiness) epoch() uint64 { return s.state.Load() }
 
-func (s *readiness) resume(epoch uint64) bool { return s.state.CompareAndSwap(epoch, epoch|1) }
+func (s *readiness) resume(epoch uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state.CompareAndSwap(epoch, epoch|1)
+}
+
+func (s *readiness) observe() (uint64, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lost == nil {
+		s.lost = make(chan struct{})
+	}
+	return s.state.Load(), s.lost
+}
 
 func (n *network) verifyOwnership(ctx context.Context) error {
 	n.rt.mu.Lock()

@@ -101,8 +101,13 @@ func TestConfiguredTypeCapacity(t *testing.T) {
 			if len(rt.factories) != count {
 				t.Fatal("missing Factories", len(rt.factories))
 			}
+			if got := discoverLocal(t, rt); len(got.Actors) != count {
+				t.Fatal("Discovery consumed user Type capacity", got)
+			}
+
 			// Type registration does not consume business instance capacity.
 			mustCreate(t, rt, ActorKey{fmt.Sprintf("type%d", count-1), "one"}, token(t))
+			discoverLocal(t, rt) // a full business engine does not prevent discovery
 		})
 	}
 
@@ -110,7 +115,41 @@ func TestConfiguredTypeCapacity(t *testing.T) {
 	if _, err := rt.Register(testContext(t), ActorSpec[*counter]{Type: "two", New: func(ActorKey) *counter { return &counter{} }}); !errors.Is(err, actorx.ErrFull) {
 		t.Fatal(err)
 	}
+}
 
+func TestManagementDiscoveryCapacityArithmetic(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	for _, types := range []int{0, 1} {
+		l, err := normalizeLimits(ExecutionLimits{Types: types}, TransportLimits{})
+		want := 0
+		if types > 0 {
+			want = types + 1
+		}
+		if err != nil || l.managementInstances() != want {
+			t.Fatal("incorrect system instance reservation", l, err)
+		}
+	}
+
+	if uint64(maxInt) < 1<<32 {
+		return // On 32-bit hosts the subscription byte budget rejects these sizes first.
+	}
+
+	// At the aggregate boundary, reserve one more management instance for
+	// Discovery without turning unlimited user Types into a finite capacity.
+	e := ExecutionLimits{Creating: 1 << 20, CreatingPerType: 1 << 20, Instances: 1 << 20}
+	l, err := normalizeLimits(e, TransportLimits{})
+	if err != nil || l.managementInstances() != 0 {
+		t.Fatal("zero Types must remain unlimited", l, err)
+	}
+	e.Types = maxInt/l.managementPending() - 1
+	l, err = normalizeLimits(e, TransportLimits{})
+	if err != nil || l.managementInstances() != e.Types+1 {
+		t.Fatal("system instance was not reserved", l, err)
+	}
+	e.Types++
+	if _, err := normalizeLimits(e, TransportLimits{}); !errors.Is(err, actorx.ErrSetup) {
+		t.Fatal("management aggregate capacity omitted the system instance", err)
+	}
 }
 
 func TestConfiguredInstanceCapacity(t *testing.T) {
@@ -326,5 +365,17 @@ func TestConfiguredTaskLimitAndCompletionReservation(t *testing.T) {
 				t.Fatal("task/completion reservation exceeded its limit", count, err)
 			}
 		})
+	}
+}
+
+func TestBusinessSubscriptionBudgetOverflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	limits, err := normalizeLimits(ExecutionLimits{}, TransportLimits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instances := maxInt/(limits.replyFrames()*(128<<10)) + 1
+	if _, err := normalizeLimits(ExecutionLimits{Instances: instances}, TransportLimits{}); !errors.Is(err, actorx.ErrSetup) {
+		t.Fatal("aggregate business pending bytes overflow accepted", err)
 	}
 }

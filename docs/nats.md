@@ -54,8 +54,12 @@ The inventory below uses `<namespace>` for this value. For `prod`, the message p
 | `actorxdist.<namespace>.actor.<T>.<I>` | Send/Call/Stream requests and Call/Stream cancellation | The current active instance subscribes normally |
 | `_INBOX.<N>.<R>` | Activation/control replies, business replies, Stream chunks and termination | Runtime subscribes normally to `_INBOX.<N>.*` |
 | `_INBOX.<N>.control.<R>` | Return window credit after Stream consumption | Runtime subscribes normally to `_INBOX.<N>.control.*` |
+| `actorxdist.<namespace>.discovery.v1.query` | Internal discovery broadcast | Every Runtime subscribes normally, without a queue group |
+| `actorxdist.<namespace>.discovery.v1.reply.<RuntimeID>` | One node's discovery snapshot or full/unavailable reply | The origin Runtime has one permanent ordinary subscription |
 
 The Factory queue group is `actorxdist.<namespace>.factory.<T>.workers`, not a publish destination. Control and business entries use no queue group. Business operation names live in frames rather than per-handler subjects; cancellation uses the original business subject. Runtime reply and credit subscriptions are created lazily and shared, without per-call or per-stream application subscriptions.
+
+The two discovery subscriptions are installed and flushed at initialization, including on Runtimes with no registered Types. RuntimeID identifies a Runtime lifetime. A discovery query's NATS Reply must exactly match the reply subject derived from its origin RuntimeID in the same namespace. Public DiscoveryCluster queries aggregate these snapshots in the local Discovery Actor over a bounded collection window. See the [discovery wire](contract.md#internal-discovery-transport) and [discovery_network.go](../discovery_network.go).
 
 See [network.go](../network.go), [activation.go](../activation.go), [factory_rpc.go](../factory_rpc.go) and [stream.go](../stream.go) for implementation.
 
@@ -93,5 +97,7 @@ Runtime enables AllowDirect on newly created streams. The Registry uses point re
 Callers publish activation, confirmation, any required stop control and business requests. Providers subscribe to their offered Types, registration controls and instance business entries. Both sides publish replies and Stream credits and subscribe to their own inboxes. Treat confirm and stop as separate publish permissions.
 
 Every Runtime queries streams during initialization and creates missing buckets; pure callers also read contracts, ownership and exit records. Contract publication, conditional ownership/exit writes and routine maintenance belong to provider paths. Use the name templates above to scope permissions to actual namespaces, Type/token ranges, KV keys and streams, with separate grants for each role.
+
+Every Runtime also needs subscribe access to its namespace's discovery query subject and its own discovery reply subject, plus publish access to the query subject and peers' discovery reply subjects. These tokens constrain reply routing; they do not authenticate cluster members.
 
 Each namespace uses three streams with separate bucket capacity, while account-wide storage quota and usage remain shared. Other deployments' usage also affects `$JS.API.INFO` capacity checks. Namespace naming isolates names; security isolation requires NATS accounts, authentication and permissions. See the [NATS account documentation](https://docs.nats.io/learn/security/accounts-and-multitenancy), and [deployment](deployment.md) for server configuration, capacity changes and fault handling.

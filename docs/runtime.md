@@ -45,6 +45,35 @@ Unregister immediately closes the registration's new-activation gate, stops its 
 
 Unregister is idempotent. Timeout ends only the wait; cleanup continues and can be joined again. Re-register a local Type only after its old registration has settled. The new registration gets a fresh token; old handles cannot withdraw it, and old Addr values remain fixed to their original generation. Runtime.Close joins all unfinished registrations.
 
+## Local and cluster discovery
+
+Use Discover to observe the ready Actor types registered on this Runtime:
+
+```go
+report, err := rt.Discover(ctx, actorxdist.DiscoveryQuery{})
+```
+
+The report lists Types in order, with their contract fingerprints and each provider's RuntimeID and Description. RuntimeID identifies one Runtime lifetime; even an empty directory includes it in Responders. Discovery reads registrations without constructing instances, and excludes registrations being installed or withdrawn. Returned slices belong to the caller; observing a type does not reserve capacity or guarantee a later call.
+
+Local queries require Window=0 and return EndReason=DiscoveryEndSnapshot, or DiscoveryEndLimit with Truncated=true when the 256-entry / 64 KiB snapshot budget is exceeded.
+
+For a finite cluster observation, select DiscoveryCluster:
+
+```go
+report, err := rt.Discover(ctx, actorxdist.DiscoveryQuery{
+    Scope:  actorxdist.DiscoveryCluster,
+    Window: 500 * time.Millisecond, // zero selects 200 ms; maximum 2 s
+})
+```
+
+Collection starts after the local snapshot is ready. The caller's context bounds the entire operation. The local snapshot is included once; each remote Runtime contributes at most one consistent snapshot, including empty directories. Matching Types merge by fingerprint, preserving Description separately for each source. Actors sort by Type; Providers and Responders sort by RuntimeID.
+
+A normal window ends with DiscoveryEndWindow, even with no remote replies. Responders is an observed set, not a membership list; Truncated=false does not prove all nodes replied. Remote snapshot truncation propagates without ending collection. Reports accept whole node snapshots up to 256 responders, 4096 sources and 1 MiB of JSON; a node that exceeds a budget is omitted and ends the observation with DiscoveryEndLimit and Truncated=true. At most four cluster queries occupy this Actor at once; canceled workers retain capacity until their completion is reclaimed. Mailbox, Pending, Task and transport budgets can reject earlier.
+
+Errors return a zero report: invalid scope/window returns actorx.ErrSetup; Actor/Task overload or locally lost replies returns actorx.ErrFull; cancellation preserves the context error; Runtime closure returns actorx.ErrClosed. An unavailable or interrupted transport returns ErrOwnerUnavailable, including across reconnects. Correlated malformed or contradictory node replies return ErrProtocol; fingerprint conflicts return ErrContract. Remote full/unavailable replies fail the query explicitly. There are no transparent retries or partial reports on error. Use errors.Is with these sentinels.
+
+The local Discovery Actor owns aggregation, while NATS supplies bounded broadcast and reply delivery. See the [NATS subjects and permissions](nats.md#messages-and-queue-groups) and [internal discovery wire](contract.md#internal-discovery-transport). This API is independent of Remote; HTTP cluster catalogs and cross-gateway calling are separate work.
+
 ## Completion, ordering and errors
 
 | Call or observation | Meaning |
@@ -134,7 +163,7 @@ Instances configures both execution and activation capacity with one value. Each
 
 Zero selects the default: Types has no count limit by default; all other fields have finite defaults. Negative values or resource arithmetic overflow return actorx.ErrSetup before a connection is opened. The last option of the same group replaces the whole group, then zero fields receive defaults. Configuration is fixed for the Runtime lifetime and does not change peers or server quotas.
 
-Factory instance capacity follows Types. Factory task/completion capacity grows with the effective creation concurrency, retaining control/cleanup headroom independently of business Tasks. Request/reply buffers and dispatch queues grow with the configured transport limits; wire windows, payload sizes, dispatch worker counts and Registry I/O/storage limits stay independently bounded. These ceilings do not guarantee admission: another budget can return ErrFull first. See the [resource table](contract.md#time-and-development-resource-profile) for the default profile and derived capacities; increasing Instances requires checking storage headroom.
+Factory instance capacity follows Types, with one additional management instance reserved for Discovery. A zero Types limit remains unlimited. Management task/completion capacity grows with the effective creation concurrency, retaining control/cleanup headroom independently of business Tasks. Request/reply buffers and dispatch queues grow with the configured transport limits; wire windows, payload sizes, dispatch worker counts and Registry I/O/storage limits stay independently bounded. These ceilings do not guarantee admission: another budget can return ErrFull first. See the [resource table](contract.md#time-and-development-resource-profile) for the default profile and derived capacities; increasing Instances requires checking storage headroom.
 
 ## Error classifications
 

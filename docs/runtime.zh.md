@@ -45,6 +45,35 @@ Unregister 立即关闭该次注册的新激活入口，然后停止所属逻辑
 
 Unregister 幂等；超时只结束这次等待，清理继续，可以再次等待。同名 Type 必须在旧注册结清后才能重新注册，新注册获得新 token；旧句柄无法撤销后继注册。旧 Addr 仍固定原代。Runtime.Close 会负责所有未结清的注册，不能用它代替单个 Type 的撤销。
 
+## 本地与集群发现
+
+通过 Discover 查询当前 Runtime 已就绪的 Actor 类型：
+
+```go
+report, err := rt.Discover(ctx, actorxdist.DiscoveryQuery{})
+```
+
+报告按 Type 排序，包含契约 fingerprint 及各来源的 RuntimeID、Description。RuntimeID 标识一次 Runtime 寿命，空目录的 Responders 也包含本 Runtime。发现只读取注册，不构造实例；安装中或撤销中的注册不参与结果。返回的 slice 归调用方所有；发现某类型不预留容量，也不保证之后的调用成功。
+
+本地查询要求 Window=0，正常返回 EndReason=DiscoveryEndSnapshot；快照超过 256 条或 64 KiB 编码预算时返回 DiscoveryEndLimit，并设置 Truncated=true。
+
+有限窗口的集群观测使用 DiscoveryCluster：
+
+```go
+report, err := rt.Discover(ctx, actorxdist.DiscoveryQuery{
+    Scope:  actorxdist.DiscoveryCluster,
+    Window: 500 * time.Millisecond, // 零值采用 200 ms；最大 2 s
+})
+```
+
+采集窗口从本地快照就绪后开始，调用方 context 限定全过程。本地快照只纳入一次；远端每个 Runtime 最多接纳一份一致快照，空目录也算响应。相同 Type 按 fingerprint 合并，Description 按来源分别保留。Actors 按 Type 排序，Providers 和 Responders 按 RuntimeID 排序。
+
+正常窗口结束返回 DiscoveryEndWindow，即使没有远端回复也合法。Responders 是观测集合，不是成员列表；Truncated=false 不表示已收齐所有节点。远端快照截断只传播标志，仍继续采集。报告按整节点快照接纳，最多 256 个响应 Runtime、4096 条来源及 1 MiB JSON；下一份快照超限时不接纳该节点，并以 DiscoveryEndLimit、Truncated=true 结束。每个 Discovery Actor 最多同时占用四个集群查询槽，取消的 worker 要等 completion 回收才释放容量；mailbox、Pending、Task 和传输预算也可能更早拒绝工作。
+
+错误时返回零值报告：非法 scope/window 返回 actorx.ErrSetup；Actor/Task 过载或本地丢失回复返回 actorx.ErrFull；取消保留 context 错误；Runtime 关闭返回 actorx.ErrClosed。传输不可用、中途断线或跨 epoch 重连返回 ErrOwnerUnavailable。可关联的损坏或矛盾节点回复返回 ErrProtocol；fingerprint 冲突返回 ErrContract。远端 full/unavailable 明确使查询失败。不透明重试，也不在错误时返回部分报告；使用 errors.Is 判断 sentinel。
+
+本地 Discovery Actor 承载聚合，NATS 提供有界广播和回复投递。subject、权限及 wire 见 [NATS 技术参考](nats.zh.md#消息与队列组)和[内部发现传输](contract.zh.md#内部发现传输)。该 API 独立于 Remote；HTTP 集群目录和跨 gateway 调用属于后续工作。
+
 ## 完成、顺序与错误
 
 | 调用或观察 | 含义 |
@@ -134,7 +163,7 @@ Instances 用同一个值配置执行实例和激活容量，两处独立计数�
 
 字段为零使用默认值：Types 默认不限制数量，其他字段均有有限默认值。负数或资源容量算术溢出在连接网络前返回 actorx.ErrSetup。同组 Option 后者整体替换前者，再为零字段补默认值。配置在 Runtime 寿命内固定，不修改其他进程或服务端配额。
 
-Factory 实例容量跟随 Types；Factory 任务及完成队列容量随有效创建并发增长，独立于业务 Tasks，并保留控制/清理余量。请求/回复缓冲与分派队列随网络容量配套增长；wire 窗口、payload 大小、分派 worker 数及 Registry I/O/存储仍有独立限制。配置是容量上限，不保证受理，其他预算也可能先返回 ErrFull。默认资源表及内部推导规则见 [wire 参考](contract.zh.md#时间及开发资源配置)；提高 Instances 时须检查存储余量。
+Factory 实例容量跟随 Types，管理层额外为 Discovery 预留一个实例；Types=0 仍表示不限数量。管理层任务及完成队列容量随有效创建并发增长，独立于业务 Tasks，并保留控制/清理余量。请求/回复缓冲与分派队列随网络容量配套增长；wire 窗口、payload 大小、分派 worker 数及 Registry I/O/存储仍有独立限制。配置是容量上限，不保证受理，其他预算也可能先返回 ErrFull。默认资源表及内部推导规则见 [wire 参考](contract.zh.md#时间及开发资源配置)；提高 Instances 时须检查存储余量。
 
 ## 错误分类
 

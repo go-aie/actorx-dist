@@ -47,3 +47,11 @@ func (n Names) ControlSubject(typ, token string) string {
 func (n Names) ActorSubject(typ, id string) string {
 	return n.SubjectPrefix + ".actor." + identity.Token(typ) + "." + identity.Token(id)
 }
+
+func (n Names) DiscoveryQuerySubject() string {
+	return n.SubjectPrefix + ".discovery.v1.query"
+}
+
+func (n Names) DiscoveryReplySubject(runtimeID string) string {
+	return n.SubjectPrefix + ".discovery.v1.reply." + runtimeID
+}

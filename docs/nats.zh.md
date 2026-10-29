@@ -54,8 +54,12 @@ Remote provider/consumer 通过 HTTP/SSE 与 Gateway 通信；Gateway 内部的 
 | `actorxdist.<namespace>.actor.<T>.<I>` | Send/Call/Stream 请求及 Call/Stream 取消 | 当前有效实例普通订阅 |
 | `_INBOX.<N>.<R>` | 激活与控制回复、业务回复、Stream 分片和终止 | Runtime 普通订阅 `_INBOX.<N>.*` |
 | `_INBOX.<N>.control.<R>` | Stream 消费后归还窗口额度 | Runtime 普通订阅 `_INBOX.<N>.control.*` |
+| `actorxdist.<namespace>.discovery.v1.query` | 内部发现广播 | 每个 Runtime 普通订阅，无 queue group |
+| `actorxdist.<namespace>.discovery.v1.reply.<RuntimeID>` | 单节点快照或 full/unavailable 回复 | 发起 Runtime 一个常驻普通订阅 |
 
 Factory queue group 名为 `actorxdist.<namespace>.factory.<T>.workers`，不是发布目的 subject。控制入口与业务入口不使用 queue group。业务操作名放在帧内，不为每个 handler 创建 subject；取消使用原业务 subject。Runtime 延迟建立并共用回复和额度订阅，不按调用或流新增应用订阅。
+
+发现的两个订阅在初始化时安装并 Flush，没有已注册 Type 的 Runtime 也安装。RuntimeID 标识一次 Runtime 寿命；query 的 NATS Reply 必须精确等于同 namespace 下由 origin RuntimeID 推导的回复 subject。公开 DiscoveryCluster 查询由本地 Discovery Actor 在有限窗口内聚合这些快照。wire 及实现见[内部发现传输](contract.zh.md#内部发现传输)和 [discovery_network.go](../discovery_network.go)。
 
 实现见 [network.go](../network.go)、[activation.go](../activation.go)、[factory_rpc.go](../factory_rpc.go) 和 [stream.go](../stream.go)。
 
@@ -93,5 +97,7 @@ Runtime 新建的 stream 开启 AllowDirect。Registry 使用点读和有界扫�
 调用方发布激活、确认、所需停止控制及业务请求；提供方订阅自己提供的 Type、注册控制入口和实例业务入口。双方需要发布回复和 Stream 额度，并订阅自己的 inbox。confirm 与 stop 应按不同发布权限处理。
 
 所有 Runtime 初始化均查询 stream，缺失时创建 bucket；纯调用方也会读取契约、归属与退出记录。契约发布、归属/退出条件写入和日常维护属于提供方路径。按上方名称模板，将权限限定到实际 namespace、Type/token、KV key 和 stream；各角色所需权限应分别配置。
+
+每个 Runtime 还须有本 namespace 发现 query 及自身 reply subject 的订阅权限，以及 query 和其他节点 reply subject 的发布权限。这些 token 限定回复路由，不承担集群成员认证。
 
 每个 namespace 使用三个 stream，并有独立 bucket 容量；account 总存储配额及用量仍共用，其他部署的用量也会影响 `$JS.API.INFO` 容量检查。Namespace 提供命名隔离，安全隔离需结合 NATS account、认证与权限，见 [NATS account 文档](https://docs.nats.io/learn/security/accounts-and-multitenancy)。服务端配置、容量调整及故障处理见[部署指南](deployment.zh.md)。

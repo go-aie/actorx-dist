@@ -186,8 +186,11 @@ func (n *network) confirmCurrent(ctx context.Context, key ActorKey, gen, factory
 	if n.rt.registrationToken(key.Type) != factory {
 		return owned{}, ErrActivationUnknown
 	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; ; attempt++ {
 		var o owned
 		o, err = n.registry.owner(ctx, key)
 		if err != nil {
@@ -200,7 +203,14 @@ func (n *network) confirmCurrent(ctx context.Context, key ActorKey, gen, factory
 		if err == nil {
 			return o, nil
 		}
-		if !pause(ctx, time.Duration(20<<attempt)*time.Millisecond) {
+
+		// Concurrent confirmations and READY transitions legitimately replace this
+		// revision. Retry CAS conflicts for the same generation until the deadline;
+		// other failures retain the three-attempt bound. Backoff is capped at 80 ms.
+		if attempt >= 2 && !errors.Is(err, nats.ErrKeyExists) {
+			break
+		}
+		if !pause(ctx, time.Duration(20<<min(attempt, 2))*time.Millisecond) {
 			break
 		}
 	}
@@ -338,7 +348,8 @@ func (n *network) startActivation(e *creation, spec registration) (local actorx.
 	receiver := &businessTarget{key: e.key, generation: e.generation, coreID: target.ID, spec: spec, work: w}
 	w.sub, err = n.nc.Subscribe(n.actorSubject(e.key), n.businessCallback(receiver))
 	if err == nil {
-		err = w.sub.SetPendingLimits(2, 256<<10)
+		frames := n.rt.limits.replyFrames()
+		err = w.sub.SetPendingLimits(frames, frames*(128<<10))
 	}
 	if err == nil {
 		ctx, cancel := managementContext()

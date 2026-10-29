@@ -288,3 +288,54 @@ func (p *activationCallProbe) activate(actorx.Context, activateRequest) (*creati
 	<-p.release
 	return nil, actorx.ErrFull
 }
+
+// Four competing revisions must not turn a live owner into an unknown outcome.
+func TestConfirmationContentionNATS(t *testing.T) {
+	url := os.Getenv("ACTORX_NATS_URL")
+	if url == "" {
+		t.Skip("set ACTORX_NATS_URL to an isolated JetStream server")
+	}
+	worker := testRuntimeWithOptions(t, []Option{WithNATS(url)})
+	typ := fmt.Sprintf("confirm-contention-%x", time.Now().UnixNano())
+	key := ActorKey{typ, "one"}
+	var remaining atomic.Int32
+	worker.net.registry.writeFault = func(stage, bucket, k string) error {
+		if stage == "before" && bucket == worker.names.CurrentBucket && k == currentKey(key) && remaining.Load() > 0 {
+			remaining.Add(-1)
+			return nats.ErrKeyExists
+		}
+		return nil
+	}
+	if _, err := counterRegistration(typ)(testContext(t), worker); err != nil {
+		t.Fatal(err)
+	}
+	addr := mustAddr(t, worker, typ, key.ID)
+	if _, err := addr.Call[int](testContext(t), add{1}); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := worker.net.registry.owner(testContext(t), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	remaining.Store(4)
+	confirmed, err := worker.net.confirmCurrent(testContext(t), key, owner.value.Generation, owner.value.Factory)
+	if err != nil || remaining.Load() != 0 ||
+		!sameGeneration(confirmed.value, owner.value) || confirmed.value.State != "READY" {
+		t.Fatal(confirmed, err, remaining.Load())
+	}
+
+	// Persistent contention is still bounded by the caller, with no new generation.
+	remaining.Store(100)
+	ctx, cancel := context.WithTimeout(testContext(t), 50*time.Millisecond)
+	defer cancel()
+	_, err = worker.net.confirmCurrent(ctx, key, owner.value.Generation, owner.value.Factory)
+	remaining.Store(0)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	current, err := worker.net.registry.owner(testContext(t), key)
+	if err != nil || !sameGeneration(current.value, owner.value) {
+		t.Fatal(current, err)
+	}
+}

@@ -100,6 +100,11 @@ func normalizeLimits(e ExecutionLimits, t TransportLimits) (runtimeLimits, error
 	// Check aggregate slot and byte arithmetic before allocating any resource or
 	// reading declarations. Capacities remain finite, including on 32-bit hosts.
 	maxInt := int(^uint(0) >> 1)
+	if e.Types == maxInt {
+		return runtimeLimits{}, fmt.Errorf("%w: management instance capacity overflow", actorx.ErrSetup)
+	}
+
+	limits := runtimeLimits{e, t}
 	for _, factors := range [][]int{
 		{max(1, e.Types), 2, 1 << 20}, // per-Type subscription pending bytes
 		{e.Creating, 2},
@@ -107,8 +112,8 @@ func normalizeLimits(e ExecutionLimits, t TransportLimits) (runtimeLimits, error
 		{e.Instances, e.MailboxCapacity},
 		{e.Instances, e.Pending},
 		{e.Instances, e.Tasks},
-		{e.Instances, 2, 128 << 10}, // business subscription pending bytes
-		{t.Requests, 2, 128 << 10},  // request queues and reply buffers
+		{e.Instances, limits.replyFrames(), 128 << 10}, // business subscription pending bytes
+		{t.Requests, 2, 128 << 10},                     // request queues and reply buffers
 		{t.Streams, streamItems, streamBytes},
 		{t.ContractCacheTypes, maxCachedContractBytes},
 	} {
@@ -120,8 +125,7 @@ func normalizeLimits(e ExecutionLimits, t TransportLimits) (runtimeLimits, error
 			product *= factor
 		}
 	}
-	limits := runtimeLimits{e, t}
-	if max(1, e.Types) > maxInt/limits.managementPending() {
+	if max(1, limits.managementInstances()) > maxInt/limits.managementPending() {
 		return runtimeLimits{}, fmt.Errorf("%w: management capacity overflow", actorx.ErrSetup)
 	}
 	return limits, nil
@@ -146,3 +150,11 @@ func (l runtimeLimits) managementTasks() int {
 func (l runtimeLimits) managementMailbox() int { return max(64, 2*l.managementTasks()) }
 func (l runtimeLimits) managementPending() int { return max(128, 2*l.managementTasks()) }
 func (l runtimeLimits) managementCalls() int   { return max(64, l.execution.Creating) }
+
+// Discovery has one reserved system instance; zero still means unlimited Types.
+func (l runtimeLimits) managementInstances() int {
+	if l.execution.Types == 0 {
+		return 0
+	}
+	return l.execution.Types + 1
+}

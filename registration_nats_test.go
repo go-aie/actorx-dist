@@ -194,6 +194,16 @@ func TestRegistrationNATS(t *testing.T) {
 		wg.Wait()
 		for range cap(results) {
 			if err := <-results; err != nil {
+				for i, rt := range []*Runtime{first, second, client} {
+					t.Logf("Runtime %d: ready=%v epoch=%d connection=%v", i, rt.net.ready.Load(), rt.net.ready.epoch(), rt.net.nc.Status())
+					for range 64 {
+						select {
+						case d := <-rt.net.diagnostics:
+							t.Logf("Runtime %d diagnostic: %+v", i, d)
+						default:
+						}
+					}
+				}
 				t.Fatal(err)
 			}
 		}

@@ -30,7 +30,8 @@ func TestRegistrationDescriptionValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rt := testRuntime(t)
 			r, err := rt.Register(testContext(t), ActorSpec[*counter]{
-				Type: "counter", Description: tt.description,
+				Type:        "counter",
+				Description: tt.description,
 				New: func(ActorKey) *counter {
 					t.Error("Register invoked New")
 					return &counter{}
@@ -59,17 +60,23 @@ func TestRegistrationDescriptionSnapshotAndReplacement(t *testing.T) {
 	rt, peer := testRuntime(t), testRuntime(t)
 	ctx := testContext(t)
 	spec := ActorSpec[*counter]{
-		Type: "counter", Description: "original",
-		New: func(ActorKey) *counter { return &counter{} },
+		Type:        "counter",
+		Description: "original",
+		New:         func(ActorKey) *counter { return &counter{} },
 	}
 	original, err := rt.Register(ctx, spec)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Editing the caller's declaration cannot change an installed registration.
 	spec.Description = "replacement"
 	if original.spec.description != "original" || rt.specs[spec.Type].description != "original" {
 		t.Fatal("changing the caller's spec changed the registration")
 	}
+
+	// A peer and a re-registration may use the new description while retaining
+	// exactly the same immutable message contract.
 	other, err := peer.Register(ctx, spec)
 	if err != nil {
 		t.Fatal(err)

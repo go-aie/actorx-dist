@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-aie/actorx"
+	"github.com/go-aie/actorx-dist/internal/identity"
 	"github.com/go-aie/actorx-dist/internal/naming"
 )
 
@@ -33,6 +34,8 @@ type Runtime struct {
 	cancel      context.CancelFunc
 	limits      runtimeLimits
 	names       naming.Names
+	runtimeID   string
+	discovery   actorx.Addr
 
 	business, management *actorx.Runtime
 	execution            *actorx.LocalChannel
@@ -83,12 +86,17 @@ func NewRuntime(initCtx context.Context, options ...Option) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
+	runtimeID, err := identity.NewOpaque()
+	if err != nil {
+		return nil, err
+	}
 
 	rt := &Runtime{
 		initialized:   true,
 		registrations: map[string]*Registration{},
 		limits:        limits,
 		names:         names,
+		runtimeID:     runtimeID,
 		specs:         map[string]registration{},
 		factories:     map[string]actorx.Addr{},
 		ledger:        map[string]*creation{},
@@ -103,7 +111,7 @@ func NewRuntime(initCtx context.Context, options ...Option) (*Runtime, error) {
 		return nil, err
 	}
 
-	// Business execution and Factory management have independent resource limits.
+	// Business execution and management Actors have independent resource limits.
 	rt.life, rt.cancel = context.WithCancel(context.Background())
 	rt.execution = actorx.NewLocalChannel()
 	rt.business, err = actorx.NewRuntime(initCtx,
@@ -123,8 +131,13 @@ func NewRuntime(initCtx context.Context, options ...Option) (*Runtime, error) {
 			actorx.WithTaskLimit(limits.managementTasks()),
 			actorx.WithCallLimit(limits.managementCalls()),
 			actorx.WithStreamLimits(1, 4<<10),
-			actorx.WithInstanceLimit(limits.execution.Types),
+			actorx.WithInstanceLimit(limits.managementInstances()),
 		)
+	}
+	if err == nil {
+		// Discovery is always local to this Runtime, including an empty directory.
+		// Install it before network subscriptions can forward snapshot requests.
+		rt.discovery, err = rt.management.Spawn(&discoveryActor{rt: rt, snapshot: rt.snapshotLocal})
 	}
 
 	if err == nil && !cfg.localTest {
