@@ -277,7 +277,7 @@ func (g *Gateway) Control(ctx context.Context, m protocol.Message) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !bytes.Equal(s.id, c.RequestID) {
+	if !sameRequestID(s.id, c.RequestID) {
 		return ErrCorrelation
 	}
 	if m.Method == protocol.Cancel {
@@ -297,4 +297,18 @@ func (g *Gateway) Control(ctx context.Context, m protocol.Message) error {
 		}
 	}
 	return nil
+}
+
+// sameRequestID decodes string escapes while preserving ID types and exact
+// numeric tokens. No numeric ID is converted through float64.
+func sameRequestID(a, b json.RawMessage) bool {
+	a, b = bytes.TrimSpace(a), bytes.TrimSpace(b)
+	if len(a) == 0 || len(b) == 0 {
+		return false
+	}
+	if a[0] == '"' && b[0] == '"' {
+		var left, right string
+		return json.Unmarshal(a, &left) == nil && json.Unmarshal(b, &right) == nil && left == right
+	}
+	return bytes.Equal(a, b)
 }

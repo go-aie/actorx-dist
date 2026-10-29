@@ -6,7 +6,12 @@ import time
 import unittest
 
 import httpx
-from actorx_remote import OutcomeUnknownError, RemoteError, Runtime
+from actorx_remote import (
+    DeadlineExceededError,
+    OutcomeUnknownError,
+    RemoteError,
+    Runtime,
+)
 from actorx_remote import protocol as p
 from support import ADDRESS, Gateway, Stream, bounded
 
@@ -85,6 +90,65 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         self.final(0)
         self.assertEqual([v async for v in stream], [])
         self.assertEqual(stream.addr.address, ADDRESS)
+        await self.runtime.close()
+        with self.assertRaises(StopAsyncIteration):
+            await anext(stream)
+
+    async def stalled_ack(self, terminal=None, queued=False):
+        stream = await self.open()
+        self.chunk(1, "first")
+        self.assertEqual(await bounded(anext(stream)), "first")
+        if queued:
+            self.chunk(2, "second")
+        original = self.runtime._http.reply
+
+        async def reply(raw, session):
+            if p.envelope(raw)["method"] != "stream/ack":
+                return await original(raw, session)
+            if terminal == "success":
+                self.final(2 if queued else 1)
+            elif terminal == "error":
+                error = p.failure(self.request["id"], 1000, actor_address=ADDRESS)
+                error["error"]["data"]["final_seq"] = 1
+                self.wire.send(error)
+            if terminal is not None:
+                await bounded(stream.reader)
+            # The ack was handled, but its HTTP response never returns.
+            await asyncio.Event().wait()
+
+        self.runtime._http.reply = reply
+        stream.deadline = asyncio.get_running_loop().time() + 0.1
+        return stream
+
+    async def test_last_ack_timeout_preserves_consumed_success(self):
+        stream = await self.stalled_ack("success")
+        with self.assertRaises(StopAsyncIteration):
+            await bounded(anext(stream))
+        self.assertTrue(stream.remote_terminal)
+        self.assertIsNone(stream.error)
+
+    async def test_ack_timeout_without_terminal_is_unknown(self):
+        stream = await self.stalled_ack()
+        with self.assertRaises(OutcomeUnknownError):
+            await bounded(anext(stream))
+        self.assertFalse(stream.remote_terminal)
+        with self.assertRaises(OutcomeUnknownError):
+            await anext(stream)
+
+    async def test_ack_timeout_cannot_skip_queued_items(self):
+        stream = await self.stalled_ack("success", queued=True)
+        with self.assertRaises(DeadlineExceededError):
+            await bounded(anext(stream))
+        self.assertTrue(stream.remote_terminal)
+        self.assertEqual(stream.queue.qsize(), 1)
+        with self.assertRaises(DeadlineExceededError):
+            await anext(stream)
+
+    async def test_last_ack_timeout_preserves_remote_failure(self):
+        stream = await self.stalled_ack("error")
+        with self.assertRaises(RemoteError) as caught:
+            await bounded(anext(stream))
+        self.assertEqual(caught.exception.rpc_code, 1000)
 
     async def test_six_items_ack_only_after_processing(self):
         stream = await self.open()
@@ -167,6 +231,49 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cancel["method"], "stream/cancel")
         self.assertTrue(stream.reader.done())
         self.assertTrue(self.wire.closed.is_set())
+        with self.assertRaises(RemoteError) as caught:
+            await anext(stream)
+        self.assertEqual(caught.exception.rpc_code, 1009)
+
+    async def test_runtime_close_reports_cancel_to_waiting_and_later_next(self):
+        stream = await self.open()
+        self.chunk(1, "first")
+        self.assertEqual(await bounded(anext(stream)), "first")
+        waiting = asyncio.create_task(anext(stream))
+        await bounded(self.controls.get())  # next is waiting after its ack
+        await self.runtime.close()
+        with self.assertRaises(RemoteError) as caught:
+            await bounded(waiting)
+        self.assertEqual(caught.exception.rpc_code, 1009)
+        with self.assertRaises(RemoteError) as caught:
+            await anext(stream)
+        self.assertEqual(caught.exception.rpc_code, 1009)
+
+    async def test_close_cannot_skip_queued_success(self):
+        stream = await self.open()
+        self.chunk(1, "first")
+        self.chunk(2, "second")
+        self.final(2)
+        await bounded(stream.reader)
+        self.assertEqual(await bounded(anext(stream)), "first")
+        await stream.aclose()
+        with self.assertRaises(RemoteError) as caught:
+            await anext(stream)
+        self.assertEqual(caught.exception.rpc_code, 1009)
+        self.assertTrue(stream.remote_terminal)
+        self.assertEqual(stream.queue.qsize(), 1)
+
+    async def test_close_cannot_skip_delivered_last_item(self):
+        stream = await self.open()
+        self.chunk(1, "last")
+        self.final(1)
+        await bounded(stream.reader)
+        self.assertEqual(await bounded(anext(stream)), "last")
+        self.assertTrue(stream.queue.empty())
+        await self.runtime.close()
+        with self.assertRaises(RemoteError) as caught:
+            await anext(stream)
+        self.assertEqual(caught.exception.rpc_code, 1009)
 
     async def test_definite_http_rejection_does_not_contaminate_address(self):
         from actorx_remote import AuthenticationError

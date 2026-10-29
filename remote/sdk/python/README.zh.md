@@ -74,6 +74,8 @@ async with actor.stream({"text": "hello"}, timeout=30) as chunks:
 
 每个注册最多保存 8 个完整身份的实例和 8 个执行资源槽。同实例 handler 串行，不同实例独立推进。请求排队即计入资源槽，期限覆盖排队、执行和响应 POST。期限先于 handler 启动时终态为 1005；启动后缺少终态为 1004。原预算耗尽后不另开响应预算。超时只结清 RPC，handler 真正退出后才释放锁和资源槽；忽略取消且一直不退出的用户代码也会阻止 close 完成。
 
+每个注册另有 8 条 Stream 账本的独立上限，包含终态后仍待 ack 的流。账本满时，新 Stream 返回 1001/full；Call 仍可使用空闲执行槽。Ack、原期限或注册关闭会回收保留的账本。
+
 ## 错误与固定地址
 
 `RemoteError.code` 为字符串 kind，`rpc_code` 为整数 RPC code，`data` 保留合法扩展数据。已知 kind/code 不一致会被拒绝，未知 code 使用通用 `RemoteError` 和 `code="unknown"`。另提供 `AuthenticationError`（401）、`SessionError`（403）、`TransportError`、`ProtocolError`、`OutcomeUnknownError`、`ActivationUnknownError`、`DeadlineExceededError` 和 `UnsupportedOperationError`。`asyncio` 取消仍抛 `CancelledError`。
@@ -99,6 +101,8 @@ count = await actor.call({"n": 5})  # 原 Addr、同一代实例
 首次 Call 或 Stream 可能已受理却缺少有效选代证据时，本次返回结果不明，句柄进入不明状态；后续操作抛本地 `AddressUncertainError`。调用者需要显式重新取句柄才可能重新选代，这不会对之前的工作去重。认证、参数拒绝和确定的建连失败不污染句柄；固定地址永不因错误自动换代。错误消息使用固定诊断，不转发用户异常堆栈或服务端原始诊断。
 
 ## 流的消费与关闭
+
+未完成的 Stream 关闭后，等待中和后续的迭代都会抛出 `rpc_code == 1009` 的 `RemoteError`；正常耗尽的流在关闭后仍正常结束。合法成功终态已验证且全部数据已消费时，最后 ack 的失败或超时不会改写成功结果。
 
 处理完当前项、请求下一项时，SDK 才发送消费确认。默认总期限五秒，`timeout` 接受 (0, 60] 秒，不因收到 chunk 延长。正常耗尽表示已收到合法终态并处理完全部项；空流也必须有明确终态。部分输出后失败仍抛异常，已处理内容不回滚。
 

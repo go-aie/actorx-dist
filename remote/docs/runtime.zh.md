@@ -68,6 +68,7 @@ Go 代理每实例只受理一个活动业务操作（Call/Stream），重叠调
 | 每注册保留的激活记录 | 8 条 |
 | 每实例代理活动业务操作（Call/Stream） | 1 个 |
 | 每注册 Python 对象 / 执行槽 | 各 8 个 |
+| 每个 SDK 注册保留的 Stream 账本（Go/Python） | 8 条，包含终态后仍待 ack 的流 |
 
 执行槽包括排队请求和超时后仍未退出的 handler，仅结清 RPC 不能绕过容量。actorx-dist 有独立的[执行和传输限制](../../docs/runtime.zh.md)，默认实例容量 64、payload 上限 64 KiB；这些与 remote 完整消息的 [wire 限制](protocol.zh.md)分别校验。当前 remote 常量不提供公共调节选项。
 

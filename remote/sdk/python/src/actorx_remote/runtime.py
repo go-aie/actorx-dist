@@ -311,10 +311,10 @@ class _Registration:
         work = _Work(message, a, deadline)
         if message["method"] == "actor/stream":
             work.stream = ProviderStream(self, work)
-            self.streams[rpc_id] = work.stream
         if (
             deadline <= asyncio.get_running_loop().time()
             or len(self.active) >= p.CAPACITY
+            or (work.stream is not None and len(self.streams) >= p.CAPACITY)
         ):
             await self.settle(
                 work,
@@ -325,6 +325,11 @@ class _Registration:
                 ),
             )
             return
+
+        # Finished streams retain their ledgers until ack/expiry/close. They
+        # consume separate capacity even after their execution slot is released.
+        if work.stream is not None:
+            self.streams[rpc_id] = work.stream
 
         # Queued work also consumes a slot; only execute's cleanup releases it.
         self.active.add(work)

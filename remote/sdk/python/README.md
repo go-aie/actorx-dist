@@ -74,6 +74,8 @@ The same package exports `JSONValue`, `Actor`, `StreamActor`, `ActorFactory` and
 
 Each registration holds at most eight complete-identity instances and eight execution slots. Handlers on the same instance run serially; different instances progress independently. Queued requests already consume slots, and the deadline covers queueing, execution and response POST. Expiry before handler entry produces 1005; missing terminal evidence after entry produces 1004. Expiry does not open a new response budget. Timeout settles the RPC, but locks and slots remain held until the handler actually exits. User code that ignores cancellation indefinitely also prevents close from finishing.
 
+Stream ledgers have a separate limit of eight per registration, including finished streams awaiting ack. A full ledger set rejects new Streams with 1001/full; Call can still use available execution slots. Ack, the original deadline or registration shutdown releases retained ledgers.
+
 ## Errors and fixed addresses
 
 `RemoteError.code` is a string kind, `rpc_code` the integer RPC code, and `data` preserves valid extension data. Known kind/code mismatches are rejected; unknown codes use generic `RemoteError` with `code="unknown"`. Other exceptions include `AuthenticationError` (401), `SessionError` (403), `TransportError`, `ProtocolError`, `OutcomeUnknownError`, `ActivationUnknownError`, `DeadlineExceededError` and `UnsupportedOperationError`. Asyncio cancellation still raises `CancelledError`.
@@ -99,6 +101,8 @@ Missing address evidence or a contradictory Stream terminal is treated as 1004. 
 If the first Call or Stream may have been accepted without valid generation evidence, it reports an unknown outcome and leaves the handle uncertain. Later operations fail locally with `AddressUncertainError`. Obtaining a fresh handle is an explicit caller decision and does not deduplicate earlier work. Authentication/parameter rejection and definite connection-establishment failure do not contaminate the handle. Fixed addresses never change generation automatically on error. Error messages use fixed diagnostics without forwarding user stack traces or raw server diagnostics.
 
 ## Stream consumption and close
+
+Closing an unfinished Stream makes waiting and later iterations raise `RemoteError` with `rpc_code == 1009`; successful exhaustion remains exhausted after close. A final ack failure or timeout does not replace a validated success once all items have been consumed.
 
 The SDK acknowledges an item after processing, when iteration requests the next one. The default total deadline is five seconds; `timeout` accepts (0, 60] seconds and chunks never extend it. Normal exhaustion requires a valid terminal and all items processed; empty streams also need an explicit terminal. Failure after partial output still raises an exception; processed output is not rolled back.
 

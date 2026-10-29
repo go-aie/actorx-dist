@@ -68,6 +68,7 @@ The Go proxy admits one active business operation (Call/Stream) per instance and
 | Retained activation records per registration | 8 |
 | Active proxy business operation (Call/Stream) per instance | 1 |
 | Python objects / execution slots per registration | 8 each |
+| Retained Stream ledgers per SDK registration (Go/Python) | 8, including finished streams awaiting ack |
 
 Slots include queued calls and handlers still running after timeout. RPC settlement alone cannot bypass capacity. Dist has its own [execution and transport limits](../../docs/runtime.md); its default instance capacity is 64 and payload limit is 64 KiB. These remain separate from remote's complete-message [wire limits](protocol.md). The current remote constants are not public tuning options.
 

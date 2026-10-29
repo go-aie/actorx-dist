@@ -113,6 +113,67 @@ func TestProviderStreamWindowAndTerminal(t *testing.T) {
 	}
 }
 
+func TestProviderStreamFinalCreditFailureKeepsDeliveredSuccess(t *testing.T) {
+	for _, mode := range []string{"session-closed", "queue-full", "missing-terminal", "queued", "write-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			g, r := fakeGateway(t, nil)
+			g.backend.stream = func(ctx context.Context, a protocol.Address, in protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
+				return a, r.session.invokeStream(ctx, a, in, func(c protocol.Chunk) error { return yield(a, c) })
+			}
+			entered, release := make(chan struct{}), make(chan struct{})
+			t.Cleanup(func() {
+				select {
+				case <-release:
+				default:
+					close(release)
+				}
+			})
+			done := make(chan error, 1)
+			go func() {
+				_, err := g.Stream(testCtx(t), protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")}, func(protocol.Address, json.RawMessage) error {
+					close(entered)
+					<-release
+					if mode == "write-failure" {
+						return errors.New("local delivery failed")
+					}
+					return nil
+				})
+				done <- err
+			}()
+			m := await(t, r.Events())
+			if err := acceptTestChunk(r.session, providerChunkMessage(m, 1)); err != nil {
+				t.Fatal(err)
+			}
+			await(t, entered)
+			finalSeq := uint64(1)
+			if mode == "queued" {
+				finalSeq = 2
+				if err := acceptTestChunk(r.session, providerChunkMessage(m, 2)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode != "missing-terminal" {
+				if err := r.session.accept(protocol.Success(m.ID, protocol.StreamResult{Address: testAddress("one"), FinalSeq: finalSeq})); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "queue-full" {
+				for range cap(r.session.events) {
+					r.session.events <- protocol.Notification(protocol.Credit, struct{}{})
+				}
+			} else {
+				r.session.close()
+			}
+			close(release)
+			err := await(t, done)
+			wantSuccess := mode == "session-closed" || mode == "queue-full"
+			if (err == nil) != wantSuccess {
+				t.Fatalf("mode %s: %v", mode, err)
+			}
+		})
+	}
+}
+
 func TestProviderStreamInvalidAndEmpty(t *testing.T) {
 	for _, mode := range []string{
 		"empty",
@@ -287,6 +348,45 @@ func TestConsumerControlCorrelationAndConsumption(t *testing.T) {
 	}
 	if len(g.consumerStreams) != 0 {
 		t.Fatal("retained consumer state")
+	}
+}
+
+func TestConsumerControlMatchesIDValueAndType(t *testing.T) {
+	for _, tc := range []struct {
+		id, control string
+		match       bool
+	}{
+		{`"\u0061"`, `"a"`, true},
+		{`"a"`, `"\u0061"`, true},
+		{`"\u003c"`, `"<"`, true},
+		{`900719925474099312345`, `900719925474099312345`, true},
+		{`900719925474099312345`, `900719925474099312346`, false},
+		{`1.234567890123456789`, `1.234567890123456789`, true},
+		{`1`, `"1"`, false},
+		{`null`, `null`, true},
+		{`null`, `"null"`, false},
+		{`"a"`, `"b"`, false},
+	} {
+		t.Run(tc.id+"/"+tc.control, func(t *testing.T) {
+			g, _ := fakeGateway(t, nil)
+			s, err := g.OpenStream(testCtx(t), json.RawMessage(tc.id), protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			s.seq = 1
+			ack := protocol.Notification(protocol.Credit, protocol.ControlParams{RequestID: json.RawMessage(tc.control), StreamToken: s.token, AckSeq: 1})
+			cancel := protocol.Notification(protocol.Cancel, protocol.CancelParams{RequestID: json.RawMessage(tc.control), StreamToken: s.token})
+			for _, m := range []protocol.Message{ack, cancel} {
+				err = g.Control(testCtx(t), m)
+				if tc.match && err != nil || !tc.match && !errors.Is(err, ErrCorrelation) {
+					t.Fatalf("%s: %v", m.Method, err)
+				}
+			}
+			if (s.ack == 1) != tc.match || (s.ctx.Err() != nil) != tc.match {
+				t.Fatal("control changed another request's credit or cancellation")
+			}
+		})
 	}
 }
 

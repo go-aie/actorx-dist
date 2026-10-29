@@ -174,15 +174,18 @@ func (s *session) invokeStream(
 			return err
 		}
 
-		// Native Write acknowledges consumption, not just queue admission.
-		// Keep its item and byte charges until that acknowledgement arrives.
+		// Write completes this segment's bounded handoff. Keep its item and
+		// byte charges until that handoff completes, independently of ack delivery.
 		consumed = chunk.seq
 		s.mu.Lock()
 		delete(p.sizes, chunk.seq)
 		p.bytes -= chunk.size
 		err = s.streamControl(p, protocol.Credit, chunk.seq)
+		complete := p.terminal && p.err == nil && consumed == p.seq
 		s.mu.Unlock()
-		if err != nil {
+		// A failed final ack cannot erase validated success after every item
+		// has completed local delivery. Earlier ack or Write failures still fail.
+		if err != nil && !complete {
 			return err
 		}
 	}

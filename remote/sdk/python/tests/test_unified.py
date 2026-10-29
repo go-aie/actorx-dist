@@ -70,6 +70,77 @@ async def exchange(registration, posts, method, rpc_id, value=None, **kw):
 
 
 class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_finished_stream_ledgers_have_separate_capacity(self):
+        entered = []
+
+        class Actor:
+            async def handle(self, value):
+                return value
+
+            async def handle_stream(self, value):
+                entered.append(value)
+                yield value
+
+        async with provider(Actor) as (_, reg, posts):
+            await exchange(reg, posts, "actor/create", "create")
+            for i in range(p.CAPACITY):
+                terminal, chunks = await exchange(
+                    reg, posts, "actor/stream", f"s:{i}", i
+                )
+                self.assertEqual(chunks, [i])
+                self.assertEqual(terminal["result"]["final_seq"], 1)
+                await bounded(reg.streams[f"s:{i}"].work.job)
+            self.assertFalse(reg.active)
+            self.assertEqual(len(reg.streams), p.CAPACITY)
+
+            terminal, chunks = await exchange(
+                reg, posts, "actor/stream", "full", "must-not-run"
+            )
+            self.assertEqual(terminal["error"]["code"], 1001)
+            self.assertEqual(terminal["error"]["data"]["final_seq"], 0)
+            self.assertEqual(chunks, [])
+            self.assertEqual(entered, list(range(p.CAPACITY)))
+            self.assertEqual(len(reg.streams), p.CAPACITY)
+
+            # Retained ledgers limit Streams, while Call still has execution room.
+            terminal, _ = await exchange(reg, posts, "actor/call", "call", "ok")
+            self.assertEqual(terminal["result"]["value"], "ok")
+            await reg.dispatch(
+                p.notification(
+                    "stream/ack",
+                    {
+                        "request_id": "s:0",
+                        "stream_token": TOKEN,
+                        "ack_seq": 1,
+                    },
+                )
+            )
+            self.assertEqual(len(reg.streams), p.CAPACITY - 1)
+            terminal, chunks = await exchange(
+                reg, posts, "actor/stream", "replacement", "next"
+            )
+            self.assertEqual(chunks, ["next"])
+            self.assertEqual(terminal["result"]["final_seq"], 1)
+            self.assertEqual(len(reg.streams), p.CAPACITY)
+        self.assertFalse(reg.streams)
+
+    async def test_finished_stream_ledger_expires_at_original_deadline(self):
+        class Actor:
+            async def handle_stream(self, value):
+                yield value
+
+        async with provider(Actor) as (_, reg, posts):
+            await exchange(reg, posts, "actor/create", "create")
+            terminal, _ = await exchange(reg, posts, "actor/stream", "stream", ms=150)
+            self.assertEqual(terminal["result"]["final_seq"], 1)
+            self.assertIn("stream", reg.streams)
+
+            async def expired():
+                while reg.streams:
+                    await asyncio.sleep(0.005)
+
+            await bounded(expired())
+
     async def test_classes_and_closures_are_lazy_and_share_identity(self):
         for mode in ("call", "stream", "both"):
             for closure in (False, True):

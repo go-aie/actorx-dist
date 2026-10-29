@@ -117,10 +117,16 @@ class Stream:
             )
 
     async def __anext__(self) -> JSONValue:
-        if self.closed:
-            raise StopAsyncIteration
-        self._start()
+        if not self.closed:
+            self._start()
         async with self._next_lock:
+            if self.closed:
+                # Close publishes its outcome after joining the reader. Both
+                # waiting and subsequent next calls must observe that outcome.
+                await self.aclose()
+                if self.error is not None:
+                    raise self.error
+                raise StopAsyncIteration
             try:
                 async with asyncio.timeout_at(self.deadline):
                     if self.previous:
@@ -146,21 +152,32 @@ class Stream:
                         self.wake.clear()
                         await self.wake.wait()
             except TimeoutError:
-                await self.aclose()
+                # The final ack's HTTP response may stall after a valid terminal
+                # arrived over SSE. Preserve that evidence when delivery is done.
+                if self.remote_terminal and self.error is not None:
+                    await self.aclose()
+                    raise self.error
+                if self._consumed_success():
+                    await self.aclose()
+                    raise StopAsyncIteration
                 if self.remote_terminal:
-                    raise DeadlineExceededError(
+                    self.error = DeadlineExceededError(
                         "deadline_exceeded",
                         1005,
                         "Stream consumption deadline exceeded",
-                    ) from None
-                if self.dispatched:
+                    )
+                elif self.dispatched:
                     self.addr._unknown()
-                    raise OutcomeUnknownError(
+                    self.error = OutcomeUnknownError(
                         "outcome_unknown", 1004, "Stream has no valid terminal"
-                    ) from None
-                raise DeadlineExceededError(
-                    "deadline_exceeded", 1005, "Stream expired before dispatch"
-                ) from None
+                    )
+                else:
+                    self.error = DeadlineExceededError(
+                        "deadline_exceeded", 1005, "Stream expired before dispatch"
+                    )
+                self.terminal = True
+                await self.aclose()
+                raise self.error from None
             except StopAsyncIteration:
                 raise
             except BaseException:
@@ -350,6 +367,14 @@ class Stream:
         self.terminal = True
         self.wake.set()
 
+    def _consumed_success(self) -> bool:
+        return (
+            self.remote_terminal
+            and self.error is None
+            and not self.previous
+            and self.queue.empty()
+        )
+
     async def aclose(self) -> None:
         if self._close_task is None:
             self.closed = True
@@ -371,7 +396,7 @@ class Stream:
             self.reader.cancel()
             await asyncio.gather(self.reader, return_exceptions=True)
         self.addr._runtime._streams.discard(self)
-        if not self.terminal:
-            self.terminal = True
+        if self.error is None and not self._consumed_success():
             self.error = RemoteError("canceled", 1009, "Stream was closed locally")
+        self.terminal = True
         self.wake.set()
