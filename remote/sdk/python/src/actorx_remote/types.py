@@ -33,3 +33,17 @@ class StreamActor(Protocol):
 
 
 ActorFactory: TypeAlias = Callable[[], Actor | StreamActor]
+
+
+class ActorInfo(TypedDict):
+    """A registered Remote type observed in the distributed directory."""
+
+    type: str
+    description: str
+    protocol: str
+
+
+class ActorsResult(TypedDict):
+    """A finite directory observation, without a completeness guarantee."""
+
+    actors: list[ActorInfo]

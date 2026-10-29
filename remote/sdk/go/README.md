@@ -64,6 +64,17 @@ StreamWriter.Write inherits the handler context, accounts for the complete encod
 
 Inputs use encoding/json.Marshal: structs, JSON tags, pointers, maps, slices, json.Number, json.RawMessage and standard custom serialization are supported. Outputs and provider messages decode as nil, bool, string, json.Number, []any and map[string]any, preserving number precision without restoring Go types. The SDK validates encoded JSON for UTF-8, duplicate keys, depth and complete-message size. Business type conversion belongs to the application.
 
+## Directory queries
+
+```go
+report, err := rt.Actors(ctx)
+// Check err before using report.Actors.
+```
+
+Queries observe compatible Remote registrations across the distributed Runtime during a collection window, without a scope parameter. Types are deduplicated; descriptions are empty when sources disagree. Entries describe registered types, not running instances. Responses contain only `actors`. The finite observation window does not guarantee all nodes were observed. If core limits truncate a snapshot/report, the query fails with 1001/full instead of returning a partial directory.
+
+Queries use at most five seconds, are canceled and joined on Runtime shutdown, return no partial directory on failure, and never retry. Complete responses are limited to 8 KiB; the Gateway rejects oversize responses. Cross-Gateway call ingress remains to be completed, so directory visibility currently does not guarantee that any ingress can Call/Stream that type. See the [directory protocol](../../docs/protocol.md#runtimeactors-list-registered-actor-types).
+
 ## Addresses and errors
 
 Use errors.Is for classification and errors.As for *RemoteError (Code, RPCCode, Data) or *TransportError (Code, Status). Caller cancellation preserves context.Canceled. Other categories include ErrDeadlineExceeded, ErrOutcomeUnknown, ErrActivationUnknown, ErrAddressUncertain, ErrUnsupportedOperation, ErrStopped, ErrAuthentication, ErrSession, ErrProtocol and ErrTransport.

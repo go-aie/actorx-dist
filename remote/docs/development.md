@@ -23,10 +23,12 @@ Use the existing HTTP/NATS tests with an isolated JetStream service:
 
 ```sh
 ACTORX_REMOTE_NATS_URL=nats://127.0.0.1:4222 \
-  GOWORK=off go test -race ./remote/http -run NATS -v
+  GOWORK=off go test -race ./remote/... -run 'NATS|RemoteBridgeFingerprint' -v
 ```
 
 Without this variable, real NATS tests are skipped. For Go/Python interoperability, use the [Counter](../examples/counter/README.md) or [Chat](../examples/chat/README.md) commands and choose each side's language as needed.
+
+`TestDirectoryHTTPClusterNATS` covers three Runtimes, multiple Gateways, empty directories, withdrawal, native type filtering, description disagreement, parameterless cluster discovery, scope/window rejection and complete-message 8 KiB rejection. `TestRemoteBridgeFingerprint` checks the protocol mapping against a real Runtime contract. Changes to bridge DTOs, bindings or core schema require this gate and a Remote version assessment, rather than merely updating the constant. Core snapshot truncation returns 1001/full; successful responses contain only actors. SDK vectors, invalid directory results and query cancellation/shutdown are in the routine gates. Directory visibility does not validate cross-Gateway calling.
 
 ## Releases
 

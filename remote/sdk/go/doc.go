@@ -7,6 +7,9 @@
 // Each Addr serializes its operations and retains the first selected generation.
 // A cold address with an uncertain outcome refuses further calls.
 //
+// Runtime.Actors observes distributed registrations without activating them.
+// Cluster coverage is finite and does not grant this Gateway cross-Gateway calls.
+//
 // Runtime.Register installs a provider session without constructing an actor.
 // The first create calls ActorFactory; subsequent Calls and Streams on the same
 // complete identity share that object and its execution lock. Each registration

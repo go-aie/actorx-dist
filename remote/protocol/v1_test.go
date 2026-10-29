@@ -71,7 +71,9 @@ func TestV1WireVectors(t *testing.T) {
 			RequestID:   json.RawMessage(`"c:stream-1"`),
 			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 		}),
-		"register": registration,
+		"actors_request": request(Actors, "list-1", struct{}{}),
+		"actors_limit":   ErrorResponse(json.RawMessage(`"list-1"`), NewError(Full, Kind(Full), nil)),
+		"register":       registration,
 		"registered": Success(json.RawMessage(`"p:register-1"`), RegistrationInfo{
 			Protocol: Version, Type: a.Type, SessionToken: "session-token",
 		}),

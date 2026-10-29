@@ -6,6 +6,8 @@ Remote lets applications written in different languages call stateful Actors ove
 
 The implementation provides a Go gateway and Go/Python SDKs used from source. Send, WebSocket, automatic retry/reconnection and provider recovery are outside its current scope.
 
+The directory observes Remote types across the distributed Runtime during a collection window. Both SDKs provide directory queries. Visibility does not grant cross-Gateway calling through the current ingress; see the [directory protocol](docs/protocol.md#runtimeactors-list-registered-actor-types).
+
 ## Architecture and data flow
 
 Consumer application code uses the Remote SDK to make Calls or consume Streams. A provider application uses the SDK to register Actors and run business Actors. The gateway connects the two sides and uses actorx-dist for routing and activation.

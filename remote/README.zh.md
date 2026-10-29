@@ -6,6 +6,8 @@ Remote 让不同语言编写的应用通过 HTTP 调用有状态 Actor：Call �
 
 当前提供 Go gateway，以及从源码使用的 Go/Python SDK。Send、WebSocket、自动重试/重连和 provider 恢复不在当前实现范围内。
 
+目录查询分布式 Runtime 在采集窗口内观察到的 Remote 类型；Go/Python SDK 均提供目录 API。目录可见不代表当前入口能跨 Gateway 调用，详见[目录协议](docs/protocol.zh.md#runtimeactors列出已注册的-actor-类型)。
+
 ## 架构与数据流
 
 Consumer 应用中的业务代码通过 Remote SDK 发起 Call 或消费 Stream；provider 应用通过 SDK 注册 Actor 并运行自己的业务 Actor。Gateway 连接两端，通过 actorx-dist 完成路由与激活。

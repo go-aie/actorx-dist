@@ -85,7 +85,7 @@ All methods appear below. Params are required unless marked optional; a fixed ad
 | Method | Message | Params | Successful result |
 | --- | --- | --- | --- |
 | `runtime/register` | Request | type; optional description, default empty | protocol, type, session_token |
-| `runtime/actors` | Request | Empty object, may be omitted | actors: array of type/description/protocol |
+| `runtime/actors` | Request | Empty object, may be omitted | actors: array of objects with type, description, protocol |
 | `actor/call` | Request | address, input; optional deadline_unix_ms | Fixed address, value |
 | `actor/create` | Request | Fixed address, deadline_unix_ms | Same address |
 | `actor/stream` | Request | Common Call fields; provider requests also require stream_token, window | Fixed address, final_seq |
@@ -151,20 +151,19 @@ Gateway → provider, the first registration SSE frame returns protocol, Type an
 }
 ```
 
-### runtime/actors: list registered Actors
+### runtime/actors: list registered Actor types
 
-Consumer → gateway, an ordinary HTTP POST; params may be omitted:
+Consumer → gateway, an ordinary HTTP POST; `params` may be omitted or `{}`:
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "list:1",
-  "method": "runtime/actors",
-  "params": {}
+  "method": "runtime/actors"
 }
 ```
 
-The gateway returns the current Actor directory snapshot on that HTTP response:
+The gateway returns a list of registered Remote Actor types in the HTTP response:
 
 ```json
 {
@@ -174,13 +173,19 @@ The gateway returns the current Actor directory snapshot on that HTTP response:
     "actors": [
       {
         "type": "demo.chat",
-        "description": "",
+        "description": "Chat provider",
         "protocol": "actorx.remote/v1"
       }
     ]
   }
 }
 ```
+
+Each Type appears once, and the list is sorted by Type. If providers of the same Type supply different descriptions, `description` is empty.
+
+The list may be incomplete. Listing a Type does not guarantee a later call will succeed. Cross-Gateway calls are not yet supported.
+
+If discovery limits prevent returning the full list, the query returns 1001/full. A complete response exceeding 8 KiB returns HTTP 413. Errors return no partial list.
 
 ## Call exchange
 

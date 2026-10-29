@@ -76,6 +76,17 @@ async with actor.stream({"text": "hello"}, timeout=30) as chunks:
 
 每个注册另有 8 条 Stream 账本的独立上限，包含终态后仍待 ack 的流。账本满时，新 Stream 返回 1001/full；Call 仍可使用空闲执行槽。Ack、原期限或注册关闭会回收保留的账本。
 
+## 查询目录
+
+```python
+report = await runtime.actors()
+print(report["actors"])
+```
+
+查询分布式 Runtime 在采集窗口内观察到的兼容 Remote 类型，无需范围参数。同 Type 去重，来源描述不一致时为空。结果中的 `actors` 是类型声明，不是运行实例。响应只包含 `actors`。发现采用有限采集窗口，不保证观察到所有节点；底层快照或报告因限额截断时返回 1001/full，不返回部分目录。
+
+查询总预算最多五秒，Runtime 关闭会取消并汇合查询；失败不返回部分目录，不自动重试。完整响应限 8 KiB，超出时 Gateway 拒绝响应。跨 Gateway 调用入口尚待补齐，当前目录可见不代表任意入口都可 Call/Stream 该类型。详见 [目录协议](../../docs/protocol.zh.md#runtimeactors列出已注册的-actor-类型)。
+
 ## 错误与固定地址
 
 `RemoteError.code` 为字符串 kind，`rpc_code` 为整数 RPC code，`data` 保留合法扩展数据。已知 kind/code 不一致会被拒绝，未知 code 使用通用 `RemoteError` 和 `code="unknown"`。另提供 `AuthenticationError`（401）、`SessionError`（403）、`TransportError`、`ProtocolError`、`OutcomeUnknownError`、`ActivationUnknownError`、`DeadlineExceededError` 和 `UnsupportedOperationError`。`asyncio` 取消仍抛 `CancelledError`。

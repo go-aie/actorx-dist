@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"sort"
 	"sync"
 	"time"
 
@@ -23,7 +22,8 @@ type registrationOwner interface{ Unregister(context.Context) error }
 // backend is a private test seam. Production always uses actorxdist. In-memory tests
 // cannot establish activation ownership, real Self or network routing.
 type backend struct {
-	register func(context.Context, string, *session) (registrationOwner, error)
+	register func(context.Context, protocol.RegisterParams, *session) (registrationOwner, error)
+	discover func(context.Context, actorxdist.DiscoveryQuery) (actorxdist.DiscoveryReport, error)
 	stream   func(context.Context, protocol.Address, protocol.InvokeStream, func(protocol.Address, protocol.Chunk) error) (protocol.Address, error)
 	call     func(context.Context, protocol.Address, protocol.Invoke) (protocol.Address, protocol.Result, error)
 }
@@ -37,9 +37,15 @@ type Gateway struct {
 	active          int
 	consumerStreams map[string]*ConsumerStream
 	closed          bool
-	once            sync.Once
-	done            chan struct{}
-	err             error
+
+	// Discovery admission shares mu with closed; Close cancels and joins queries.
+	discoveryLife   context.Context
+	discoveryCancel context.CancelFunc
+	discoveryWork   sync.WaitGroup
+
+	once sync.Once
+	done chan struct{}
+	err  error
 }
 
 // NewGateway borrows rt. Its creator closes rt after Gateway and transport
@@ -49,10 +55,12 @@ func NewGateway(rt *actorxdist.Runtime) (*Gateway, error) {
 		return nil, err
 	}
 	return newGateway(backend{
-		register: func(ctx context.Context, typ string, s *session) (registrationOwner, error) {
+		discover: rt.Discover,
+		register: func(ctx context.Context, request protocol.RegisterParams, s *session) (registrationOwner, error) {
 			r, err := rt.Register(ctx, actorxdist.ActorSpec[*proxyActor]{
-				Type: typ,
-				New:  func(actorxdist.ActorKey) *proxyActor { return &proxyActor{session: s} },
+				Type:        request.Type,
+				Description: request.Description,
+				New:         func(actorxdist.ActorKey) *proxyActor { return &proxyActor{session: s} },
 			})
 			if r == nil {
 				return nil, err
@@ -93,8 +101,11 @@ func NewGateway(rt *actorxdist.Runtime) (*Gateway, error) {
 }
 
 func newGateway(b backend) *Gateway {
+	life, cancel := context.WithCancel(context.Background())
 	return &Gateway{
 		backend:         b,
+		discoveryLife:   life,
+		discoveryCancel: cancel,
 		registrations:   map[string]*Registration{},
 		consumerStreams: map[string]*ConsumerStream{},
 		done:            make(chan struct{}),
@@ -104,15 +115,14 @@ func newGateway(b backend) *Gateway {
 // Registration must not be copied. Events has one reader and closes when session
 // admission ends. Done closes after Unregister and all outer Call/Stream operations finish.
 type Registration struct {
-	gateway     *Gateway
-	session     *session
-	info        protocol.RegistrationInfo
-	description string
-	owner       registrationOwner
-	installed   chan struct{}
-	done        chan struct{}
-	calls       sync.WaitGroup
-	once        sync.Once
+	gateway   *Gateway
+	session   *session
+	info      protocol.RegistrationInfo
+	owner     registrationOwner
+	installed chan struct{}
+	done      chan struct{}
+	calls     sync.WaitGroup
+	once      sync.Once
 
 	// gateway.mu protects ready/closing. installed publishes owner.
 	ready, closing bool
@@ -154,9 +164,8 @@ func (g *Gateway) Register(ctx context.Context, request protocol.RegisterParams)
 			Type:         request.Type,
 			SessionToken: token,
 		},
-		description: request.Description,
-		installed:   make(chan struct{}),
-		done:        make(chan struct{}),
+		installed: make(chan struct{}),
+		done:      make(chan struct{}),
 	}
 
 	// Reserve the Type before installation so another register cannot race it.
@@ -175,7 +184,7 @@ func (g *Gateway) Register(ctx context.Context, request protocol.RegisterParams)
 	// Session shutdown cancels installation; a successful install outlives ctx.
 	installCtx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(r.session.life, cancel)
-	r.owner, err = g.backend.register(installCtx, request.Type, r.session)
+	r.owner, err = g.backend.register(installCtx, request, r.session)
 	stop()
 	cancel()
 
@@ -242,6 +251,9 @@ func (g *Gateway) Close(ctx context.Context) error {
 	g.once.Do(func() {
 		g.mu.Lock()
 		g.closed = true
+		if g.discoveryCancel != nil {
+			g.discoveryCancel()
+		}
 		for _, s := range g.consumerStreams {
 			s.cancel()
 		}
@@ -259,6 +271,7 @@ func (g *Gateway) Close(ctx context.Context) error {
 				<-r.done
 				errs = append(errs, r.err)
 			}
+			g.discoveryWork.Wait()
 			g.err = errors.Join(errs...)
 			close(g.done)
 		}()
@@ -278,25 +291,6 @@ func waitClose(ctx context.Context, done <-chan struct{}, result func() error) e
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-// Actors returns an independently allocated snapshot of ready Actor registrations
-// on this Gateway. It does not enumerate running instances.
-func (g *Gateway) Actors() []protocol.Actor {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	out := make([]protocol.Actor, 0, len(g.registrations))
-	for _, r := range g.registrations {
-		if r.ready && !g.closed {
-			out = append(out, protocol.Actor{
-				Type:        r.info.Type,
-				Description: r.description,
-				Protocol:    protocol.Version,
-			})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
-	return out
 }
 
 // Call retains the selected address on failure. It never retries or replaces a

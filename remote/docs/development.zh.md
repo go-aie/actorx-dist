@@ -23,10 +23,12 @@ CI 执行这些检查；示例仅用于演示，不设置 CI 门禁。核心行�
 
 ```sh
 ACTORX_REMOTE_NATS_URL=nats://127.0.0.1:4222 \
-  GOWORK=off go test -race ./remote/http -run NATS -v
+  GOWORK=off go test -race ./remote/... -run 'NATS|RemoteBridgeFingerprint' -v
 ```
 
 未设置该变量时，真实 NATS 测试跳过。Go/Python 互通直接使用 [Counter](../examples/counter/README.zh.md) 或 [Chat](../examples/chat/README.zh.md) 的运行命令，按需选择两端语言。
+
+目录验收由 `TestDirectoryHTTPClusterNATS` 覆盖三个 Runtime、多 Gateway、空目录、撤销、原生类型过滤、描述冲突、无参数集群发现、拒绝 scope/window 参数和完整报文 8 KiB 拒绝；`TestRemoteBridgeFingerprint` 将固定协议映射与真实 Runtime 契约核对。桥接 DTO、绑定或核心 schema 变化时，必须重跑指纹门禁并评估 Remote 版本，不能仅替换常量。核心快照截断返回 1001/full，并验证成功结果只有 actors；SDK 的固定向量、非法目录结果及查询取消/关闭测试在日常门禁内。目录可见性不作为跨 Gateway 调用的验收证据。
 
 ## 发布
 

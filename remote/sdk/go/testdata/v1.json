@@ -16,5 +16,7 @@
   "call_failure": {"message_type":"json","content_type":"application/json","content":"","failure":{"code":1013,"message":"unsupported_operation"}},
   "invoke": {"request_id":"remote-call-1","message_type":"json","content_type":"application/json","content":"{\"text\":\"ping\"}"},
   "invoke_stream": {"request_id":"remote-stream-1","message_type":"json","content_type":"application/json","content":"{\"text\":\"ping\"}"},
-  "chunk": {"message_type":"json","content_type":"application/json","content":"null"}
+  "chunk": {"message_type":"json","content_type":"application/json","content":"null"},
+  "actors_request": {"jsonrpc":"2.0","id":"list-1","method":"runtime/actors","params":{}},
+  "actors_limit": {"jsonrpc":"2.0","id":"list-1","error":{"code":1001,"message":"full","data":{"kind":"full"}}}
 }

@@ -85,7 +85,7 @@ SDK 从成功结果、有效错误地址或 Stream 首项保存 generation；后
 | 方法 | 消息 | params | 成功 result |
 | --- | --- | --- | --- |
 | `runtime/register` | 请求 | type；可选 description，默认空 | protocol、type、session_token |
-| `runtime/actors` | 请求 | 空对象，可省略 | actors：type/description/protocol 数组 |
+| `runtime/actors` | 请求 | 空对象，可省略 | actors：包含 type、description、protocol 的对象数组 |
 | `actor/call` | 请求 | address、input；可选 deadline_unix_ms | 固定 address、value |
 | `actor/create` | 请求 | 固定 address、deadline_unix_ms | 相同 address |
 | `actor/stream` | 请求 | Call 共同字段；provider 请求另须 stream_token、window | 固定 address、final_seq |
@@ -151,20 +151,19 @@ Gateway → provider，注册 SSE 的首帧返回 protocol、Type 和会话 toke
 }
 ```
 
-### runtime/actors：列出已注册的 Actor
+### runtime/actors：列出已注册的 Actor 类型
 
-Consumer → gateway，普通 HTTP POST；params 可省略：
+Consumer → gateway，普通 HTTP POST；`params` 可省略或为 `{}`：
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": "list:1",
-  "method": "runtime/actors",
-  "params": {}
+  "method": "runtime/actors"
 }
 ```
 
-Gateway 在原 HTTP 响应中返回当前 Actor 目录快照：
+Gateway 在原 HTTP 响应中返回已注册的 Remote Actor 类型列表：
 
 ```json
 {
@@ -174,13 +173,19 @@ Gateway 在原 HTTP 响应中返回当前 Actor 目录快照：
     "actors": [
       {
         "type": "demo.chat",
-        "description": "",
+        "description": "Chat provider",
         "protocol": "actorx.remote/v1"
       }
     ]
   }
 }
 ```
+
+每个 Type 只出现一次，列表按 Type 排序。同一 Type 的 provider 提供不同描述时，`description` 为空。
+
+列表可能不完整，列出的 Type 也不保证后续调用成功。当前尚不支持跨 Gateway 调用。
+
+发现限额导致无法返回完整列表时，查询返回 1001/full；完整响应超过 8 KiB 时返回 HTTP 413。出错时不返回部分列表。
 
 ## Call 过程
 

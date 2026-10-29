@@ -15,7 +15,15 @@ from .errors import (
 )
 from .runtime import Runtime
 from .stream import Stream
-from .types import Actor, ActorFactory, StreamActor, Address, JSONValue
+from .types import (
+    Actor,
+    ActorFactory,
+    StreamActor,
+    Address,
+    JSONValue,
+    ActorInfo,
+    ActorsResult,
+)
 
 __all__ = [
     "Runtime",
@@ -26,6 +34,8 @@ __all__ = [
     "ActorFactory",
     "Address",
     "JSONValue",
+    "ActorInfo",
+    "ActorsResult",
     "RemoteError",
     "TransportError",
     "ProtocolError",

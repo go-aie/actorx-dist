@@ -67,9 +67,6 @@ func TestAuthentication(t *testing.T) {
 			}
 		}
 	}
-	if len(g.Actors()) != 0 {
-		t.Fatal("authentication created a registration")
-	}
 
 	for _, auth := range []string{"Bearer " + testKey, "bearer   " + testKey} {
 		r := httptest.NewRequest(http.MethodPost, "/runtime/rpc", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"runtime/actors"}`))

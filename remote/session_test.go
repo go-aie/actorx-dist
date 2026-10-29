@@ -166,8 +166,10 @@ func (o *fakeOwner) Unregister(ctx context.Context) error {
 func fakeGateway(t *testing.T, call func(context.Context, protocol.Address, protocol.Invoke) (protocol.Address, protocol.Result, error)) (*Gateway, *Registration) {
 	t.Helper()
 	g := newGateway(backend{
-		register: func(context.Context, string, *session) (registrationOwner, error) { return &fakeOwner{}, nil },
-		call:     call,
+		register: func(context.Context, protocol.RegisterParams, *session) (registrationOwner, error) {
+			return &fakeOwner{}, nil
+		},
+		call: call,
 	})
 	r, err := g.Register(testCtx(t), protocol.RegisterParams{Type: "demo.ping", Description: "test provider"})
 	if err != nil {

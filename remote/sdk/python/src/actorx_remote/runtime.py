@@ -15,7 +15,7 @@ from .addr import Addr
 from .provider_stream import ProviderStream
 from .errors import ProtocolError, RemoteError
 from .transports.http import HTTPTransport, check_status, frames, media_type, read_body
-from .types import Actor, StreamActor, ActorFactory, Address, JSONValue
+from .types import Actor, StreamActor, ActorFactory, Address, JSONValue, ActorsResult
 
 REGISTER_SECONDS = 5.0
 
@@ -86,6 +86,25 @@ class Runtime:
             return await task
         finally:
             self._calls.discard(task)
+
+    async def actors(self) -> ActorsResult:
+        """Observe compatible Remote registrations across the distributed Runtime.
+
+        Visibility does not guarantee that this gateway can call or stream a type.
+        """
+        self._check_open()
+        return cast(ActorsResult, await self._call_task(self._actors()))
+
+    async def _actors(self) -> Any:
+        from .discovery import decode_actors
+
+        async with asyncio.timeout(5):
+            rpc_id = "d:" + uuid.uuid4().hex
+            raw = p.encode(p.request("runtime/actors", rpc_id, {}))
+            reply = p.response(await self._http.call(raw), rpc_id)
+            if "error" in reply:
+                raise p.remote_error(reply["error"])
+            return decode_actors(reply["result"])
 
     async def register(
         self,

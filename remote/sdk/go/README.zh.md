@@ -64,6 +64,17 @@ GOWORK=off go test -race ./...
 
 输入使用 `encoding/json.Marshal`，支持结构体、JSON 标签、指针、map、slice、json.Number、json.RawMessage 和标准自定义序列化。输出及 provider message 解码为 nil、bool、string、json.Number、[]any、map[string]any，保留数字精度，不恢复 Go 类型。SDK 对编码后 JSON 校验 UTF-8、重复键、深度和完整消息大小；不提供业务类型转换 API。
 
+## 查询目录
+
+```go
+report, err := rt.Actors(ctx)
+// Check err before using report.Actors.
+```
+
+查询分布式 Runtime 在采集窗口内观察到的兼容 Remote 类型，无需范围参数。同 Type 去重，来源描述不一致时为空。结果中的 `actors` 是类型声明，不是运行实例。响应只包含 `actors`。发现采用有限采集窗口，不保证观察到所有节点；底层快照或报告因限额截断时返回 1001/full，不返回部分目录。
+
+查询总预算最多五秒，Runtime 关闭会取消并汇合查询；失败不返回部分目录，不自动重试。完整响应限 8 KiB，超出时 Gateway 拒绝响应。跨 Gateway 调用入口尚待补齐，当前目录可见不代表任意入口都可 Call/Stream 该类型。详见 [目录协议](../../docs/protocol.zh.md#runtimeactors列出已注册的-actor-类型)。
+
 ## 地址与错误
 
 用 `errors.Is` 分类，`errors.As` 读取 `*RemoteError` 的 Code、RPCCode、Data，或 `*TransportError` 的 Code、Status。用户取消保留 `context.Canceled`；其他分类包括 `ErrDeadlineExceeded`、`ErrOutcomeUnknown`、`ErrActivationUnknown`、`ErrAddressUncertain`、`ErrUnsupportedOperation`、`ErrStopped`、`ErrAuthentication`、`ErrSession`、`ErrProtocol` 和 `ErrTransport`。

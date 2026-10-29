@@ -76,6 +76,17 @@ Each registration holds at most eight complete-identity instances and eight exec
 
 Stream ledgers have a separate limit of eight per registration, including finished streams awaiting ack. A full ledger set rejects new Streams with 1001/full; Call can still use available execution slots. Ack, the original deadline or registration shutdown releases retained ledgers.
 
+## Directory queries
+
+```python
+report = await runtime.actors()
+print(report["actors"])
+```
+
+Queries observe compatible Remote registrations across the distributed Runtime during a collection window, without a scope parameter. Types are deduplicated; descriptions are empty when sources disagree. Entries describe registered types, not running instances. Responses contain only `actors`. The finite observation window does not guarantee all nodes were observed. If core limits truncate a snapshot/report, the query fails with 1001/full instead of returning a partial directory.
+
+Queries use at most five seconds, are canceled and joined on Runtime shutdown, return no partial directory on failure, and never retry. Complete responses are limited to 8 KiB; the Gateway rejects oversize responses. Cross-Gateway call ingress remains to be completed, so directory visibility currently does not guarantee that any ingress can Call/Stream that type. See the [directory protocol](../../docs/protocol.md#runtimeactors-list-registered-actor-types).
+
 ## Errors and fixed addresses
 
 `RemoteError.code` is a string kind, `rpc_code` the integer RPC code, and `data` preserves valid extension data. Known kind/code mismatches are rejected; unknown codes use generic `RemoteError` with `code="unknown"`. Other exceptions include `AuthenticationError` (401), `SessionError` (403), `TransportError`, `ProtocolError`, `OutcomeUnknownError`, `ActivationUnknownError`, `DeadlineExceededError` and `UnsupportedOperationError`. Asyncio cancellation still raises `CancelledError`.

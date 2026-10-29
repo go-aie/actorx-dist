@@ -34,9 +34,6 @@ func TestRegisterRejectsCapabilitiesBeforeInstallation(t *testing.T) {
 			if w.Code != http.StatusOK || e != nil || m.Error == nil || m.Error.Code != protocol.InvalidParams {
 				t.Fatalf("status %d, body %s, error %v", w.Code, w.Body.String(), e)
 			}
-			if len(g.Actors()) != 0 {
-				t.Fatal("retired capabilities installed an Actor")
-			}
 		})
 	}
 }
@@ -55,7 +52,7 @@ func TestHTTPRequests(t *testing.T) {
 		code       int
 		headers    http.Header
 	}{
-		{"directory", `{"jsonrpc":"2.0","id":9007199254740993,"method":"runtime/actors"}`, 200, 0, nil},
+		{"invalid directory scope", `{"jsonrpc":"2.0","id":9007199254740993,"method":"runtime/actors","params":{"scope":"all"}}`, 200, protocol.InvalidParams, nil},
 		{"parse", `{`, 200, protocol.ParseError, nil},
 		{"invalid", `false`, 200, protocol.InvalidRequest, nil},
 		{"unknown", `{"jsonrpc":"2.0","id":null,"method":"actor/unsupported"}`, 200, protocol.MethodNotFound, nil},
@@ -151,7 +148,7 @@ func TestHTTPRequests(t *testing.T) {
 					t.Fatal(w.Body.String(), e)
 				}
 			}
-			if tc.name == "directory" && !strings.Contains(w.Body.String(), `"id":9007199254740993`) {
+			if tc.name == "invalid directory scope" && !strings.Contains(w.Body.String(), `"id":9007199254740993`) {
 				t.Fatal("id lost precision", w.Body.String())
 			}
 		})
@@ -174,9 +171,6 @@ func TestHTTPRequests(t *testing.T) {
 		batch[0].Error.Code != protocol.TransportMode ||
 		batch[2].Error.Code != protocol.InvalidRequest {
 		t.Fatal(w.Body.String())
-	}
-	if len(g.Actors()) != 0 {
-		t.Fatal("invalid registration allocated a session")
 	}
 
 	for _, tc := range []struct {

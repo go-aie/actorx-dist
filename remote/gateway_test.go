@@ -206,7 +206,9 @@ func TestCloseRetainsEvidenceUntilOuterCallSettles(t *testing.T) {
 func TestRegistrationOwnershipAndCloseWait(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	owner := &fakeOwner{entered: entered, release: release}
-	g := newGateway(backend{register: func(context.Context, string, *session) (registrationOwner, error) { return owner, nil }})
+	g := newGateway(backend{register: func(context.Context, protocol.RegisterParams, *session) (registrationOwner, error) {
+		return owner, nil
+	}})
 	ctx, cancel := context.WithCancel(testCtx(t))
 	r, err := g.Register(ctx, protocol.RegisterParams{Type: "demo.ping", Description: "original"})
 	if err != nil {
@@ -214,14 +216,10 @@ func TestRegistrationOwnershipAndCloseWait(t *testing.T) {
 	}
 	cancel() // install ctx does not own the session
 
-	list := g.Actors()
-	if len(list) != 1 {
-		t.Fatal(list)
+	if !registrationReady(g, "demo.ping") {
+		t.Fatal("registration not ready")
 	}
-	list[0].Description = "mutated"
-	if g.Actors()[0].Description != "original" {
-		t.Fatal("directory exposed mutable storage")
-	}
+
 	if _, err := g.Register(testCtx(t), protocol.RegisterParams{Type: "demo.ping"}); err == nil {
 		t.Fatal("duplicate registration admitted")
 	} else {
@@ -233,7 +231,7 @@ func TestRegistrationOwnershipAndCloseWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	await(t, entered)
-	if len(g.Actors()) != 0 {
+	if registrationReady(g, "demo.ping") {
 		t.Fatal("closing registration in directory")
 	}
 	if _, err := g.Register(testCtx(t), protocol.RegisterParams{Type: "other.type"}); err == nil {
@@ -260,7 +258,7 @@ func TestInstallationFailureAndReregistration(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	owner := &fakeOwner{entered: entered, release: release}
 	fail := true
-	g := newGateway(backend{register: func(context.Context, string, *session) (registrationOwner, error) {
+	g := newGateway(backend{register: func(context.Context, protocol.RegisterParams, *session) (registrationOwner, error) {
 		if fail {
 			return owner, actorx.ErrFull
 		}
@@ -272,7 +270,7 @@ func TestInstallationFailureAndReregistration(t *testing.T) {
 		t.Fatal("installation discarded cleanup handle")
 	}
 	await(t, entered)
-	if len(g.Actors()) != 0 {
+	if registrationReady(g, "demo.ping") {
 		t.Fatal("failed install published")
 	}
 	_, err = g.Register(testCtx(t), protocol.RegisterParams{Type: "demo.ping"})
@@ -294,7 +292,7 @@ func TestInstallationFailureAndReregistration(t *testing.T) {
 	if err := r.Close(testCtx(t)); err != nil {
 		t.Fatal(err)
 	}
-	if len(g.Actors()) != 1 {
+	if !registrationReady(g, "demo.ping") {
 		t.Fatal("stale handle withdrew replacement")
 	}
 	if err := g.Close(testCtx(t)); err != nil {
@@ -336,7 +334,7 @@ func TestCloseDuringInstallationKeepsHandle(t *testing.T) {
 	installing := make(chan struct{})
 	installationStopped := make(chan struct{})
 	release := make(chan struct{})
-	g := newGateway(backend{register: func(ctx context.Context, _ string, _ *session) (registrationOwner, error) {
+	g := newGateway(backend{register: func(ctx context.Context, _ protocol.RegisterParams, _ *session) (registrationOwner, error) {
 		close(installing)
 		<-ctx.Done()
 		close(installationStopped)
@@ -377,4 +375,12 @@ func TestCloseDuringInstallationKeepsHandle(t *testing.T) {
 	if err := outcome.r.Close(testCtx(t)); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Inspect admission state directly; directory queries are cluster observations.
+func registrationReady(g *Gateway, typ string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	r := g.registrations[typ]
+	return !g.closed && r != nil && r.ready
 }

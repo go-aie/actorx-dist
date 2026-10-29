@@ -29,7 +29,7 @@ func TestHTTPNATS(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	rt, err := actorxdist.NewRuntime(ctx, actorxdist.WithNATS(url))
+	rt, err := actorxdist.NewRuntime(ctx, actorxdist.WithNATS(url), actorxdist.WithNamespace(directoryNamespace(t, url)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestHTTPNATS(t *testing.T) {
 	// has no directory side effects.
 	register := request(protocol.Register, "register", protocol.RegisterParams{Type: typ, Description: "Go test provider"})
 	checkPost(register, "", "wrong", 401)
-	if len(g.Actors()) != 0 {
+	if len(directoryActors(t, g)) != 0 {
 		t.Fatal("unauthorized registration published an Actor")
 	}
 	providerCtx, disconnect := context.WithCancel(ctx)
@@ -216,7 +216,7 @@ func TestHTTPNATS(t *testing.T) {
 		info.SessionToken == "" {
 		t.Fatal("invalid first registration frame")
 	}
-	if actors := g.Actors(); len(actors) != 1 || actors[0].Type != typ {
+	if actors := directoryActors(t, g); len(actors) != 1 || actors[0].Type != typ {
 		t.Fatal("missing directory entry", actors)
 	}
 	directory, err := post(ctx, request(protocol.Actors, "directory", struct{}{}), "", "application/json", testKey)
@@ -347,7 +347,7 @@ func TestHTTPNATS(t *testing.T) {
 	}
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
-	for len(g.Actors()) != 0 {
+	for len(directoryActors(t, g)) != 0 {
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
@@ -374,8 +374,8 @@ func TestHTTPNATS(t *testing.T) {
 	if _, err := io.ReadAll(reader); err != nil {
 		t.Fatal("Gateway.Close failed to end SSE", err)
 	}
-	if len(g.Actors()) != 0 {
-		t.Fatal("closed Gateway retained directory")
+	if _, err := g.Actors(ctx); err == nil {
+		t.Fatal("closed Gateway accepted directory query")
 	}
 	if _, err := rt.Addr(typ, "still-open"); err != nil {
 		t.Fatal("Gateway closed borrowed Runtime", err)
@@ -421,7 +421,7 @@ func TestHTTPNATS(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatal("write failure did not end handler")
 		}
-		if len(g2.Actors()) != 0 {
+		if len(directoryActors(t, g2)) != 0 {
 			t.Fatal("write failure retained registration")
 		}
 	})
@@ -432,3 +432,14 @@ type failFlushWriter struct{ http.ResponseWriter }
 func (w failFlushWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func (failFlushWriter) FlushError() error { return fmt.Errorf("injected flush failure") }
+
+func directoryActors(t *testing.T, g *remote.Gateway) []protocol.Actor {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	report, err := g.Actors(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return report.Actors
+}
