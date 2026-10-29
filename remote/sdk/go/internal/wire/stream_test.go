@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestProviderRequestSequence(t *testing.T) {
+	for _, raw := range []string{`"r:1"`, `"r:42"`, `"r:9007199254740991"`, `"\u0072:1"`} {
+		if _, err := ProviderRequestSequence(json.RawMessage(raw)); err != nil {
+			t.Fatal(raw, err)
+		}
+	}
+	for _, raw := range []string{`null`, `1`, `"1"`, `"r:0"`, `"r:01"`, `"r:+1"`, `"r:１"`, `"r:1.0"`, `"r:1\n"`, `"r:9007199254740992"`, `"r:18446744073709551616"`} {
+		if _, err := ProviderRequestSequence(json.RawMessage(raw)); err == nil {
+			t.Fatal(raw)
+		}
+	}
+}
+
 func TestStreamSequencesTokensAndWindows(t *testing.T) {
 	for _, raw := range []string{`0`, `1`, `9007199254740991`} {
 		if _, err := Sequence(json.RawMessage(raw)); err != nil {

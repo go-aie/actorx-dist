@@ -185,6 +185,49 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
             await bounded(anext(stream))
         self.assertEqual(caught.exception.rpc_code, 1000)
 
+    async def test_refusal_evidence(self):
+        for code in (1002, 1008):
+            for mode in ("empty", "after-chunk", "bad-final"):
+                with self.subTest(code=code, mode=mode):
+                    self.started.clear()
+                    stream = await self.open()
+                    if mode == "after-chunk":
+                        self.chunk(1, "prefix")
+                        self.assertEqual(await bounded(anext(stream)), "prefix")
+                    error = p.failure(self.request["id"], code, actor_address=ADDRESS)
+                    error["error"]["data"]["final_seq"] = 0 if mode == "empty" else 1
+                    self.wire.send(error)
+                    with self.assertRaises(RemoteError) as caught:
+                        await bounded(anext(stream))
+                    self.assertEqual(
+                        caught.exception.rpc_code, code if mode == "empty" else 1004
+                    )
+
+    async def test_refusal_before_opened(self):
+        for code in (1002, 1008):
+            for final_seq in (None, 1):
+                with self.subTest(code=code, final_seq=final_seq):
+                    async def handle(req):
+                        m = p.envelope(req.content)
+                        error = p.failure(m["id"], code)
+                        if final_seq is not None:
+                            error["error"]["data"]["final_seq"] = final_seq
+                        return httpx.Response(200, json=error)
+
+                    await self.runtime._http._client.aclose()
+                    self.runtime._http._client = httpx.AsyncClient(
+                        transport=httpx.MockTransport(handle)
+                    )
+                    addr = self.runtime.addr("demo.ping", "session-42")
+                    async with addr.stream(None) as stream:
+                        with self.assertRaises(RemoteError) as caught:
+                            await bounded(anext(stream))
+                        self.assertEqual(
+                            caught.exception.rpc_code,
+                            code if final_seq is None else 1004,
+                        )
+                    self.assertEqual(addr._uncertain, final_seq is not None)
+
     async def test_missing_terminal_and_bad_sequence_are_unknown(self):
         stream = await self.open()
         self.chunk(2)
@@ -414,7 +457,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
                     params["ack_seq"] = ack
                 gateway.stream.send(p.notification(method, params))
 
-            invoke("six", None)
+            invoke("r:2", None)
             for i in range(1, 5):
                 self.assertEqual((await bounded(chunks.get()))["params"]["seq"], i)
 
@@ -424,34 +467,34 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
 
             # Retired control names cannot release credit or cancel live work.
             registration = runtime._registrations["demo.ping"]
-            ledger = registration.streams["six"]
+            ledger = registration.streams["r:2"]
             for method, extra in (("actor/credit", {"ack_seq": 2}), ("actor/cancel", {})):
                 await registration.dispatch(
                     p.notification(
-                        method, {"request_id": "six", "stream_token": TOKEN, **extra}
+                        method, {"request_id": "r:2", "stream_token": TOKEN, **extra}
                     )
                 )
                 self.assertEqual(ledger.ack, 0)
                 self.assertEqual(len(ledger.sizes), 4)
                 self.assertFalse(ledger.work.cancel_requested)
 
-            control("stream/ack", "six", 2)
+            control("stream/ack", "r:2", 2)
             for i in (5, 6):
                 self.assertEqual((await bounded(chunks.get()))["params"]["seq"], i)
             final = await bounded(posts.get())
             self.assertEqual(final["result"]["final_seq"], 6)
 
-            control("stream/cancel", "six")  # cannot overwrite confirmed success
-            control("stream/ack", "six", 6)
+            control("stream/cancel", "r:2")  # cannot overwrite confirmed success
+            control("stream/ack", "r:2", 6)
 
             # A separate invocation can still be canceled while its handler waits.
             entered.clear()
             stopped.clear()
-            invoke("cancel", "hold")
+            invoke("r:3", "hold")
             await bounded(entered.wait())
-            control("stream/cancel", "cancel")
+            control("stream/cancel", "r:3")
             terminal = await bounded(posts.get())
-            self.assertEqual(terminal["id"], "cancel")
+            self.assertEqual(terminal["id"], "r:3")
             self.assertEqual(terminal["error"]["data"]["final_seq"], 0)
             await bounded(stopped.wait())
         self.assertFalse(runtime._registrations)
@@ -481,7 +524,7 @@ class ProviderCancellationTests(unittest.IsolatedAsyncioTestCase):
         # Dispatch and cancel without yielding to the newly scheduled worker.
         message = p.request(
             "actor/stream",
-            "pending",
+            "r:1",
             {
                 "address": ADDRESS,
                 "input": "must-not-run",
@@ -495,7 +538,7 @@ class ProviderCancellationTests(unittest.IsolatedAsyncioTestCase):
             p.notification(
                 "stream/cancel",
                 {
-                    "request_id": "pending",
+                    "request_id": "r:1",
                     "stream_token": TOKEN,
                 },
             )
@@ -551,14 +594,14 @@ class ProviderCancellationTests(unittest.IsolatedAsyncioTestCase):
             )
 
         await registration.dispatch(
-            invoke("first", "first", int(time.time() * 1000) + 100)
+            invoke("r:1", "first", int(time.time() * 1000) + 100)
         )
         await bounded(entered.wait())
         await bounded(canceled.wait())
 
         # RPC timeout did not release the first invocation's lock or slot.
         await registration.dispatch(
-            invoke("second", "second", int(time.time() * 1000) + 5000)
+            invoke("r:2", "second", int(time.time() * 1000) + 5000)
         )
         await asyncio.sleep(0)
         self.assertFalse(subsequent.is_set())

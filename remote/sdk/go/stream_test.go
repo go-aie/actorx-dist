@@ -198,6 +198,44 @@ func TestConsumerStreamPartialFailureAndFinalCreditFailure(t *testing.T) {
 	}
 }
 
+func TestConsumerStreamRefusalEvidence(t *testing.T) {
+	for _, code := range []int{1002, 1008} {
+		for _, mode := range []string{"empty", "after-chunk", "bad-final"} {
+			t.Run(wire.Kind(code)+"/"+mode, func(t *testing.T) {
+				_, a, g := newConsumerGateway(t)
+				s, err := a.Stream(context.Background(), nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.Close()
+				seq := uint64(0)
+				if mode != "empty" {
+					seq = 1
+				}
+				if mode == "after-chunk" {
+					g.chunk(1, "prefix")
+					if !s.Next() || s.Value() != "prefix" {
+						t.Fatal(s.Err())
+					}
+				}
+				g.failure(code, seq)
+				waitTerminal(t, s)
+				if s.Next() {
+					t.Fatal("unexpected item")
+				}
+				want := code
+				if mode != "empty" {
+					want = 1004
+				}
+				var remote *RemoteError
+				if !errors.As(s.Err(), &remote) || remote.RPCCode != want {
+					t.Fatal(s.Err())
+				}
+			})
+		}
+	}
+}
+
 func TestConsumerStreamProtocolFailuresAreUnknown(t *testing.T) {
 	for _, name := range []string{
 		"eof",
@@ -386,7 +424,7 @@ func TestConsumerStreamDeadlinesAndAddrQueue(t *testing.T) {
 }
 
 func TestConsumerStream1013AndSetupRejections(t *testing.T) {
-	for _, name := range []string{"1013", "missing-address", "bad-final", "401", "500", "bad-open", "legacy-open", "json-success", "connect"} {
+	for _, name := range []string{"1002", "1008", "1002-bad-final", "1008-bad-final", "1013", "missing-address", "bad-final", "401", "500", "bad-open", "legacy-open", "json-success", "connect"} {
 		t.Run(name, func(t *testing.T) {
 			_, a := newTestRuntime(t, func(req *http.Request) (*http.Response, error) {
 				m := rpcRequest(t, req)
@@ -421,6 +459,16 @@ func TestConsumerStream1013AndSetupRejections(t *testing.T) {
 					return sseResponse(b), nil
 				}
 				failure := streamFailure(providerFailure(m.ID, 1013, &selected), 0)
+				if strings.HasPrefix(name, "1002") || strings.HasPrefix(name, "1008") {
+					code := 1002
+					if strings.HasPrefix(name, "1008") {
+						code = 1008
+					}
+					failure = providerFailure(m.ID, code, nil) // rejection before stream/opened
+					if strings.HasSuffix(name, "bad-final") {
+						failure = streamFailure(failure, 1)
+					}
+				}
 				if name == "missing-address" {
 					failure = streamFailure(providerFailure(m.ID, 1013, nil), 0)
 				}
@@ -441,7 +489,7 @@ func TestConsumerStream1013AndSetupRejections(t *testing.T) {
 				if _, err := a.Call(context.Background(), nil); err != nil {
 					t.Fatal(err)
 				}
-			case "401", "connect":
+			case "1002", "1008", "401", "connect":
 				a.mu.Lock()
 				uncertain := a.uncertain
 				a.mu.Unlock()

@@ -193,7 +193,7 @@ func TestProviderParamsIDsNotificationsAndFragmentation(t *testing.T) {
 	}
 	g.create(selected)
 	b := g.stream(selected.Type)
-	for i, params := range []any{
+	for _, params := range []any{
 		[]any{},
 		map[string]any{"address": selected},
 		map[string]any{"address": selected, "input": nil, "deadline_unix_ms": nil},
@@ -207,29 +207,47 @@ func TestProviderParamsIDsNotificationsAndFragmentation(t *testing.T) {
 			"deadline_unix_ms": 1,
 		},
 	} {
-		id := mustJSON("bad-" + strings.Repeat("x", i))
+		id := g.nextID()
 		b.send(wire.Message{JSONRPC: "2.0", ID: id, Method: "actor/call", Params: mustJSON(params)})
 		assertProviderCode(t, g.response(id), -32602)
 	}
 	b.send(wire.Message{JSONRPC: "2.0", Method: "unknown"}) // notification: no reply
-	for _, id := range []json.RawMessage{mustJSON(nil), mustJSON("string-id"), []byte("900719925474099312345"), []byte("1.234567890123456789")} {
-		b.send(wire.Message{JSONRPC: "2.0", ID: id, Method: "actor/call", Params: mustJSON(map[string]any{
-			"address": selected, "input": nil, "deadline_unix_ms": time.Now().Add(5 * time.Second).UnixMilli(),
-		})})
-		if providerValue(t, g.response(id)) != nil {
-			t.Fatal("null input changed")
-		}
-		g.join(id, selected.Type)
+	id := g.send("actor/call", selected, nil, time.Now().Add(5*time.Second))
+	if providerValue(t, g.response(id)) != nil {
+		t.Fatal("null input changed")
 	}
-	raw := append(append([]byte("data: "), mustJSON(wire.Message{JSONRPC: "2.0", ID: mustJSON("split"), Method: "unknown"})...), '\n', '\n')
+	g.join(id, selected.Type)
+	id = g.nextID()
+	raw := append(append([]byte("data: "), mustJSON(wire.Message{JSONRPC: "2.0", ID: id, Method: "unknown"})...), '\n', '\n')
 	for _, c := range raw {
 		b.chunks <- []byte{c}
 	}
-	assertProviderCode(t, g.response(mustJSON("split")), -32601)
+	assertProviderCode(t, g.response(id), -32601)
 	select {
 	case m := <-g.responses:
 		t.Fatal("notification produced response", m)
 	default:
+	}
+}
+
+func TestProviderRequestSequenceIsScopedToRegistration(t *testing.T) {
+	r, g := newProviderGateway(t)
+	for _, actorType := range []string{selected.Type, "demo.other"} {
+		if err := r.Register(context.Background(), actorType, echoFactory); err != nil {
+			t.Fatal(err)
+		}
+		// Each registration starts independently; skipped IDs are also legal.
+		for _, id := range []string{"r:1", "r:9007199254740991"} {
+			g.stream(actorType).send(wire.Message{JSONRPC: "2.0", ID: mustJSON(id), Method: "unknown"})
+			assertProviderCode(t, g.response(mustJSON(id)), -32601)
+		}
+	}
+	// A lower, previously unseen ID is rejected as well as an exact duplicate.
+	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON("r:2"), Method: "unknown"})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := r.WaitClosed(ctx); !errors.Is(err, ErrProtocol) {
+		t.Fatal(err)
 	}
 }
 
@@ -251,7 +269,7 @@ func TestProviderSessionFailuresCloseWholeRuntime(t *testing.T) {
 			case "unsolicited":
 				g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON("unknown"), Result: mustJSON(nil)})
 			case "duplicate-id":
-				g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON(1), Method: "unknown"})
+				g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON("r:1"), Method: "unknown"})
 			case "session", "transport":
 				want = ErrSession
 				g.mu.Lock()

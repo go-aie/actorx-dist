@@ -18,6 +18,16 @@ from support import ADDRESS
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_provider_request_sequence(self) -> None:
+        for seq in (1, 42, 2**53 - 1):
+            self.assertEqual(p.provider_request_sequence(f"r:{seq}"), seq)
+        for rpc_id in (
+            None, 1, "1", "r:0", "r:01", "r:+1", "r:１", "r:1.0", "r:1\n",
+            "r:9007199254740992",
+        ):
+            with self.subTest(rpc_id=rpc_id), self.assertRaises(ProtocolError):
+                p.provider_request_sequence(rpc_id)
+
     def test_shared_json_boundary_vectors(self) -> None:
         vectors = cast(
             dict[str, list[str]],
@@ -51,6 +61,7 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(message["method"], f"actor/{operation}")
                 self.assertEqual(message["params"]["input"], {"text": "ping"})
                 if role == "provider":
+                    self.assertGreater(p.provider_request_sequence(message["id"]), 0)
                     self.assertEqual(p.address(message["params"]["address"]), ADDRESS)
                     self.assertEqual(
                         message["params"]["deadline_unix_ms"], 1890000000000
@@ -164,14 +175,14 @@ class ProtocolTests(unittest.TestCase):
             p.encode(
                 p.request(
                     "actor/create",
-                    "g:create-1",
+                    "r:1",
                     {"address": ADDRESS, "deadline_unix_ms": 1890000000000},
                 )
             ),
             p.encode(
                 p.request(
                     "actor/call",
-                    "g:invoke-1",
+                    "r:2",
                     {
                         "address": ADDRESS,
                         "input": None,

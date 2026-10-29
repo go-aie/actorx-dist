@@ -371,14 +371,15 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
                 (await self.gateway.response(rpc_id))["error"]["code"], 1000
             )
 
-    async def test_provider_params_unknown_method_notification_and_null_id(
+    async def test_provider_params_unknown_method_and_notification(
         self,
     ) -> None:
         await self.register()
         await self.create()
-        self.gateway.stream.send(p.request("future/method", "unknown", {}))
+        rpc_id = self.gateway.next_id()
+        self.gateway.stream.send(p.request("future/method", rpc_id, {}))
         self.assertEqual(
-            (await self.gateway.response("unknown"))["error"]["code"], -32601
+            (await self.gateway.response(rpc_id))["error"]["code"], -32601
         )
         params: object
         for params in (
@@ -386,24 +387,25 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
             {"address": ADDRESS},
             {"address": ADDRESS, "input": None, "deadline_unix_ms": 1, "extra": True},
         ):
-            self.gateway.stream.send(p.request("actor/call", str(params), params))
+            self.gateway.stream.send(p.request("actor/call", self.gateway.next_id(), params))
             self.assertEqual((await self.gateway.response())["error"]["code"], -32602)
 
-        # A missing ID suppresses replies; explicit null still receives one.
+        # A missing ID still suppresses replies to unknown notifications.
         self.gateway.stream.send({"jsonrpc": "2.0", "method": "unknown"})
-        rpc_id = self.gateway.send(rpc_id=None)
-        response = await self.gateway.response()
-        self.assertIsNone(response["id"])
+        rpc_id = self.gateway.send(value=None)
+        response = await self.gateway.response(rpc_id)
         self.assertIn("result", response)
         self.assertTrue(self.gateway.responses.empty())
 
-    async def test_numeric_provider_id_is_echoed_without_float_roundtrip(self) -> None:
-        await self.register()
-        await self.create()
-        for rpc_id in (900719925474099312345, Decimal("1.234567890123456789")):
-            self.gateway.send(value=None, rpc_id=rpc_id)
-            response = await self.gateway.response(rpc_id)
-            self.assertEqual(type(response["id"]), type(rpc_id))
+    async def test_provider_id_must_be_a_canonical_session_sequence(self) -> None:
+        registration = _Registration(self.runtime, "demo.ping", Echo, "")
+        for rpc_id in (
+            None, 1, Decimal("1.25"), "unknown", "r:0", "r:01", "r:+1", "r:１",
+            "r:9007199254740992",
+        ):
+            with self.subTest(rpc_id=rpc_id), self.assertRaises(ProtocolError):
+                await registration.dispatch(p.request("actor/call", rpc_id, {}))
+        self.assertEqual(registration.last_request_seq, 0)
 
     async def test_unexpected_response_closes_registration(self) -> None:
         await self.register()
@@ -421,6 +423,33 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProtocolError):
             await bounded(self.runtime.wait_closed())
         self.assertTrue(self.gateway.responses.empty())
+
+    async def test_provider_sequence_rejects_unseen_lower_id(self) -> None:
+        await self.register()
+        await self.create()
+        rpc_id = self.gateway.send(rpc_id="r:9007199254740991")
+        await self.gateway.response(rpc_id)
+        self.gateway.send(rpc_id="r:2")
+        with self.assertRaises(ProtocolError):
+            await bounded(self.runtime.wait_closed())
+        self.assertTrue(self.gateway.responses.empty())
+
+    async def test_provider_sequences_are_independent_per_registration(self) -> None:
+        registrations = [
+            _Registration(self.runtime, actor_type, Echo, "")
+            for actor_type in ("demo.ping", "demo.other")
+        ]
+        for registration in registrations:
+            registration.token = "session-token"
+            for seq in (1, 42):
+                # Unknown notifications have no ID and do not affect the counter.
+                await registration.dispatch(p.notification("future/method", {}))
+                rpc_id = f"r:{seq}"
+                await registration.dispatch(p.request("future/method", rpc_id, {}))
+                self.assertEqual(
+                    (await self.gateway.response(rpc_id))["error"]["code"], -32601
+                )
+            self.assertEqual(registration.last_request_seq, 42)
 
     async def test_provider_session_failure_closes_runtime(self) -> None:
         await self.register()
@@ -540,12 +569,13 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sse_fragmentation_and_frame_limit(self) -> None:
         await self.register()
-        message = p.request("future/method", "split", {})
+        rpc_id = self.gateway.next_id()
+        message = p.request("future/method", rpc_id, {})
         raw = b"data: " + p.encode(message) + b"\n\n"
         for byte in raw:
             self.gateway.stream.queue.put_nowait(bytes([byte]))
         self.assertEqual(
-            (await self.gateway.response("split"))["error"]["code"], -32601
+            (await self.gateway.response(rpc_id))["error"]["code"], -32601
         )
 
         # An incomplete over-limit frame must also close the provider connection.

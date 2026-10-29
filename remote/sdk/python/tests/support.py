@@ -129,6 +129,10 @@ class Gateway:
             timeout=None,
         )
 
+    def next_id(self) -> str:
+        self.counter += 1
+        return "r:" + str(self.counter)
+
     def send(
         self,
         method: str = "actor/call",
@@ -138,7 +142,6 @@ class Gateway:
         ms: int | None = None,
         rpc_id: RPCID | EllipsisType = ...,
     ) -> RPCID:
-        self.counter += 1
         params = {
             "address": address or dict(ADDRESS),
             "deadline_unix_ms": ms
@@ -149,7 +152,7 @@ class Gateway:
             params["input"] = value
 
         message = p.request(
-            method, "g:" + str(self.counter) if rpc_id is ... else rpc_id, params
+            method, self.next_id() if rpc_id is ... else rpc_id, params
         )
         self.stream.send(message)
         return cast(RPCID, message["id"])

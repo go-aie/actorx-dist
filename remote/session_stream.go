@@ -64,10 +64,6 @@ func (s *session) invokeStream(
 	input protocol.InvokeStream,
 	write func(protocol.Chunk) error,
 ) error {
-	id, err := opaque()
-	if err != nil {
-		return err
-	}
 	token, err := opaque()
 	if err != nil {
 		return err
@@ -77,18 +73,14 @@ func (s *session) invokeStream(
 		return actorxdist.ErrProtocol
 	}
 	ms := deadline.UnixMilli()
-	m, err := protocol.NewRequest(protocol.Stream, id, protocol.StreamParams{
+	params := protocol.StreamParams{
 		CallParams: protocol.CallParams{
 			Address: a, Input: json.RawMessage(input.Content), DeadlineUnixMS: &ms,
 		},
 		StreamToken: token,
 		Window:      protocol.StreamWindow(),
-	})
-	if err != nil {
-		return actorxdist.ErrProtocol
 	}
 	p := &providerStream{
-		id:        id,
 		token:     token,
 		requestID: input.RequestID,
 		address:   a,
@@ -113,6 +105,14 @@ func (s *session) invokeStream(
 		s.mu.Unlock()
 		return actorx.ErrFull
 	}
+	m, err := s.requestLocked(protocol.Stream, params)
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	var id string
+	_ = json.Unmarshal(m.ID, &id)
+	p.id = id
 	s.streams[id] = p
 	select {
 	case s.events <- m:
@@ -254,10 +254,11 @@ func (s *session) acceptStream(p *providerStream, m protocol.Message) error {
 			FinalSeq *uint64 `json:"final_seq"`
 		}
 
-		// Unsupported means the business method was never entered: no chunk
-		// may precede it, even if final_seq otherwise matches the received data.
+		// Execution-time output contradicts a pre-execution rejection, even
+		// when final_seq otherwise matches the received data.
+		refused := m.Error.Code == protocol.ActorUnavailable || m.Error.Code == protocol.TransportMode || m.Error.Code == protocol.UnsupportedOperation
 		if json.Unmarshal(m.Error.Data, &data) != nil || data.FinalSeq == nil || *data.FinalSeq != p.seq ||
-			m.Error.Code == protocol.UnsupportedOperation && p.seq != 0 {
+			refused && p.seq != 0 {
 			return s.failStream(p)
 		}
 		failure, err := protocol.NormalizeProviderError(m.Error)

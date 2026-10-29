@@ -179,7 +179,7 @@ func TestProviderStreamInvalidAndEmpty(t *testing.T) {
 		"empty",
 		"wrong-token", "wrong-address",
 		"duplicate", "gap", "overflow", "bad-final",
-		"failure", "unsupported-after-chunk", "disconnect",
+		"failure", "unsupported-after-chunk", "unavailable-after-chunk", "transport-after-chunk", "disconnect",
 	} {
 		t.Run(mode, func(t *testing.T) {
 			s := newSession()
@@ -225,13 +225,18 @@ func TestProviderStreamInvalidAndEmpty(t *testing.T) {
 				if err := s.accept(protocol.Success(m.ID, protocol.StreamResult{Address: testAddress("one"), FinalSeq: 1})); err != ErrResponse {
 					t.Fatal(err)
 				}
-			} else if mode == "unsupported-after-chunk" {
+			} else if mode == "unsupported-after-chunk" || mode == "unavailable-after-chunk" || mode == "transport-after-chunk" {
+				code := map[string]int{
+					"unsupported-after-chunk": protocol.UnsupportedOperation,
+					"unavailable-after-chunk": protocol.ActorUnavailable,
+					"transport-after-chunk":   protocol.TransportMode,
+				}[mode]
 				if err := acceptTestChunk(s, providerChunkMessage(m, 1)); err != nil {
 					t.Fatal(err)
 				}
 				fixed := testAddress("one")
-				if err := s.accept(protocol.ErrorResponse(m.ID, protocol.StreamError(protocol.NewError(protocol.UnsupportedOperation, "unsupported_operation", &fixed), 1))); err != ErrResponse {
-					t.Fatal("1013 after a chunk must not become definite unsupported evidence", err)
+				if err := s.accept(protocol.ErrorResponse(m.ID, protocol.StreamError(protocol.NewError(code, protocol.Kind(code), &fixed), 1))); err != ErrResponse {
+					t.Fatal("rejection after a chunk must not become definite refusal evidence", err)
 				}
 				if e := s.evidence("stream", fixed); !errors.Is(e.err, actorxdist.ErrOutcomeUnknown) {
 					t.Fatal(e)

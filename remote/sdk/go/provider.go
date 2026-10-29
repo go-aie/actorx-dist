@@ -53,19 +53,11 @@ func (p *registration) dispatch(m wire.Message) error {
 	}
 
 	if m.ID != nil {
-		// Decode string escapes for correlation, retaining numeric precision.
-		id, _ := wire.Decode(m.ID)
-		key := "null"
-		switch v := id.(type) {
-		case string:
-			key = "s:" + v
-		case json.Number:
-			key = "n:" + v.String()
-		}
-		if _, exists := p.seen[key]; exists {
+		seq, err := wire.ProviderRequestSequence(m.ID)
+		if err != nil || seq <= p.lastRequestSeq {
 			return protocolError()
 		}
-		p.seen[key] = struct{}{}
+		p.lastRequestSeq = seq
 	}
 
 	if m.Method != "actor/create" && m.Method != "actor/call" && m.Method != "actor/stream" {

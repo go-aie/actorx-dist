@@ -323,6 +323,9 @@ class Stream:
     def _terminal(self, m: p.Message) -> None:
         if "error" in m:
             e = p.remote_error(m["error"])
+            refused = e.rpc_code in (1002, 1008)
+            if refused and self.seq != 0:
+                raise ProtocolError("Rejection after stream output")
             # 1013 is definite only with a fixed identity and zero output.
             if e.rpc_code == 1013 and (
                 not isinstance(e.data, dict)
@@ -336,7 +339,7 @@ class Stream:
                 if "address" in e.data:
                     self.addr._save(e.data["address"])
                 if (
-                    self.token is not None
+                    (self.token is not None or (refused and "final_seq" in e.data))
                     and sequence(e.data.get("final_seq")) != self.seq
                 ):
                     raise ProtocolError("Invalid error final sequence")

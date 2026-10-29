@@ -150,9 +150,13 @@ func (g *providerGateway) stream(actorType string) *providerBody {
 	return g.streams[actorType]
 }
 
-func (g *providerGateway) send(method string, a Address, input any, deadline time.Time) json.RawMessage {
+func (g *providerGateway) nextID() json.RawMessage {
 	g.serial++
-	id := mustJSON(g.serial) // numeric IDs must remain numeric in replies
+	return mustJSON("r:" + strconv.Itoa(g.serial))
+}
+
+func (g *providerGateway) send(method string, a Address, input any, deadline time.Time) json.RawMessage {
+	id := g.nextID()
 	params := map[string]any{"address": a, "deadline_unix_ms": deadline.UnixMilli()}
 	if method == "actor/call" {
 		params["input"] = input

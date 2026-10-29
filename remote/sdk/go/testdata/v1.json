@@ -1,8 +1,8 @@
 {
   "consumer_call": {"jsonrpc":"2.0","id":"c:call-1","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},"input":{"text":"ping"}}},
   "consumer_stream": {"jsonrpc":"2.0","id":"c:stream-1","method":"actor/stream","params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},"input":{"text":"ping"}}},
-  "provider_call": {"jsonrpc":"2.0","id":"g:call-1","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"input":{"text":"ping"},"deadline_unix_ms":1890000000000}},
-  "provider_stream": {"jsonrpc":"2.0","id":"g:stream-1","method":"actor/stream","params":{"address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"input":{"text":"ping"},"deadline_unix_ms":1890000000000,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","window":{"items":4,"bytes":32768}}},
+  "provider_call": {"jsonrpc":"2.0","id":"r:2","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"input":{"text":"ping"},"deadline_unix_ms":1890000000000}},
+  "provider_stream": {"jsonrpc":"2.0","id":"r:3","method":"actor/stream","params":{"address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"input":{"text":"ping"},"deadline_unix_ms":1890000000000,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","window":{"items":4,"bytes":32768}}},
   "stream_opened": {"jsonrpc":"2.0","method":"stream/opened","params":{"request_id":"c:stream-1","stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","window":{"items":4,"bytes":32768}}},
   "stream_chunk": {"jsonrpc":"2.0","method":"stream/chunk","params":{"request_id":"c:stream-1","stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"seq":1,"value":null}},
   "stream_ack": {"jsonrpc":"2.0","method":"stream/ack","params":{"request_id":"c:stream-1","stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":1}},

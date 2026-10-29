@@ -15,11 +15,11 @@ Provider 注册 Actor。每个实例由 Type/ID/generation 标识，并拥有独
 | 业务输出 | 一个 JSON 值 | 零到多个 JSON 项，加一个明确终态 |
 | Consumer 响应 | HTTP JSON | HTTP SSE |
 
-对象可以只实现一种方法，也可同时实现两者；两种操作共享实例状态并串行执行。注册不探测或构造对象，首次激活才创建。请求缺失方法返回 1013；方法已进入后抛异常或返回形态错误为 1000。SDK 不自动将一种操作转换为另一种。
+对象可实现一种或两种方法；两种操作共享实例状态并串行执行。缺失所请求的方法返回 1013；方法进入后抛异常或返回形态错误为 1000。SDK 不自动转换操作。
 
 两端都主动连接 gateway。Provider 保持注册 SSE 接收创建、执行和流控制消息，通过独立 POST 返回结果或分片，无需监听入站端口。
 
-各阶段先用时序图说明整体流程，再展开方法和 JSON 示例：[注册与发现](#注册与发现)、[Call](#call-过程)、[Stream](#stream-过程)。[提前取消](#streamcancel提前取消)另有一张流程图。Provider 的 POST 均携带会话 Header；除明确画出的情况外，图中省略这些 POST 的 HTTP 204 交接确认。
+流程与报文：[注册与发现](#注册与发现)、[Call](#call-过程)、[Stream](#stream-过程)、[提前取消](#streamcancel提前取消)。图中省略 provider POST 的会话 Header 和 HTTP 204 交接确认，明确标注的除外。
 
 ## 传输与消息
 
@@ -33,7 +33,7 @@ Content-Type: application/json
 X-Actorx-Remote-Protocol: actorx.remote/v1
 ```
 
-SDK 自动携带 v1，并校验注册结果。gateway 在鉴权后、读取 body 和分派前要求恰好一个匹配的版本 Header；缺失、不匹配、空值或歧义值均返回 HTTP 400，版本 Header 不可省略。
+SDK 自动携带版本 Header 并校验注册结果。Gateway 在鉴权后、读取 body 和分派前要求恰好一个匹配的版本 Header；缺失、不匹配、空值或歧义值均返回 HTTP 400。
 
 | POST 内容 | 附加 Header | 正常响应 |
 | --- | --- | --- |
@@ -45,7 +45,7 @@ SDK 自动携带 v1，并校验注册结果。gateway 在鉴权后、读取 body
 
 注册和消费 Stream 都要求**单条有 ID 请求**并接受 SSE。batch/notification 不建立流：有 ID 请求返回 1008，通知不产生 RPC 响应。建立 SSE 前的业务拒绝使用 200 JSON RPC error，因此应同时接受 JSON；响应格式不可接受时返回 406。
 
-每个 SSE 帧为 `data: <一条单行 JSON-RPC 消息>` 加一个空行，并立即 flush。SSE event/id 不替代 RPC method/id。**HTTP 200、POST 204 和 SSE EOF 均不代表业务成功**；204 只证明本次交接。没有重连、续读游标或自动重试。
+每个 SSE 帧为 `data: <一条单行 JSON-RPC 消息>` 加一个空行，并立即 flush。SSE event/id 不替代 RPC method/id。**HTTP 200、POST 204 和 SSE EOF 均不代表业务成功**；204 只证明本次交接。
 
 每个 POST 都先校验共享静态 API Key，再读取 body、查找会话或执行 Actor 工作。不区分 consumer/provider 权限，无 Type ACL 或租户隔离。缺 Key 的 401 含 `WWW-Authenticate: Bearer realm="actorx-remote"`；错误 Key 另含 `error="invalid_token"`。重复/歧义 Authorization 被拒绝，Key 使用常量时间比较。
 
@@ -55,7 +55,11 @@ SDK 自动携带 v1，并校验注册结果。gateway 在鉴权后、读取 body
 
 信封使用 JSON-RPC `2.0`。请求含 `method`、对象形式的 `params` 和 `id`；通知省略 `id`；响应回显 ID，且只含 `result`、`error` 中的一种，`result: null` 也算结果。Actor 目录允许省略 params。方法按完整斜杠名称匹配，无点号别名；未知方法或方向错误为 -32601。
 
-Gateway/SDK 生成非空字符串 ID；协议也接受数字和 null，并保留其类型与精度。`id: null` 是有 ID 请求。ID 只关联本通信段的请求与响应，不提供业务去重。Provider 响应还须匹配注册和完整地址；坏响应或迟到响应不能消耗合法 pending 请求。
+Consumer/SDK 生成非空字符串 ID；consumer 请求也接受数字和 null，并保留其类型与精度。`id: null` 是有 ID 请求。ID 只关联本通信段的请求与响应，不提供业务去重。Provider 响应还须匹配注册和完整地址；坏响应或迟到响应不能消耗合法 pending 请求。
+
+Gateway → provider 的请求 ID 为 `r:<n>`：n 是 1 到 2^53−1 的十进制整数，无前导零。每个注册会话的 create/call/stream 共用从 1 开始的计数器，按入队顺序递增，允许跳号和乱序完成。Provider 仅保存已接收的最大序号；非法、重复或倒退 ID 为协议错误并结束会话。序号耗尽时拒绝新请求，不回绕。通知不推进计数器；流控制的 request_id 引用原请求。
+
+持有注册 SSE 的 Gateway 副本拥有该会话，注册、pending 和流状态均在本机内存中；相关 POST 须路由回所属副本。新注册使用新 session_token 并重新计数，副本间无需共享计数器。
 
 JSON 必须是 UTF-8，不接受重复键或 NaN/Infinity。忽略未知信封字段，拒绝未知方法参数（-32602）。业务 `input`/`value` 必填但允许 null，内部内容由应用定义；数字不在边界处舍入。
 
@@ -90,17 +94,13 @@ SDK 从成功结果、有效错误地址或 Stream 首项保存 generation；后
 | `stream/ack` | 通知 | request_id、stream_token、ack_seq | 无 |
 | `stream/cancel` | 通知 | request_id、stream_token | 无 |
 
-两段均使用 `actor/call`、`actor/stream`。共同业务字段为 `address`、`input`、`deadline_unix_ms`；Call 成功结果包含固定 `address` 和 `value`。Gateway 按需选择 generation，使用独立请求 ID 转交固定地址和既定绝对期限。Provider 执行前仍要求 generation 和显式期限，Stream 另须预置 `stream_token`、`window`；consumer 请求仍拒绝这两个控制字段，允许省略 generation 和期限。本次名称合并不扩大输入接受范围，也不改变执行约束。
+Gateway 按需选代，以独立请求 ID 转交固定地址和既定绝对期限。Provider 的 Call/Stream 必须带 generation 和显式期限，Stream 另需预置 `stream_token`、`window`；consumer 拒绝这两个控制字段，可省略 generation 和期限。
 
-这是当前未发布的 `actorx.remote/v1` 开发版本内的不兼容调整，gateway 和 SDK 须配套升级。Stream 消息改用 `stream/opened`、`stream/chunk`、`stream/ack`、`stream/cancel`；原有的 `actor/stream_open`、`actor/chunk`、`actor/credit`、`actor/cancel` 不再作为 wire 别名接受。消息体、流控、取消及 HTTP 状态处理保持不变。
-
-注册建立 provider 会话，不创建 Actor 实例，也不验证实例创建能否成功。Actor 目录列出当前注册，不枚举运行中的实例，也不保证后续可用性；其中 protocol 仅表示通信协议，不承诺对象支持哪些业务方法。v1 注册 params/result 和 Actor 条目均无 `capabilities`；旧注册参数即使为 false、null 或空对象也被拒绝，SDK 同样拒绝含该字段的注册结果。
-
-以下 JSON 为便于阅读采用缩进格式；真实 SSE 帧仍按前文规定将每条 JSON 压为一行。地址、token 和期限均为示意值，实际通信使用运行时选定的地址/token 及计算得到的期限。
+以下 JSON 为阅读方便采用缩进；实际 SSE 中每条消息占一行。地址、token 和期限为示意值，实际由运行时选定或计算。
 
 ## 注册与发现
 
-提供 Call 或 Stream 服务前，provider 先注册 Type，并保持返回的 SSE 连接。注册结果给出会话 token，供后续 provider POST 使用。Consumer 可以查询目录发现已注册的 Type；Call 或 Stream 前不强制查询目录。
+Provider 先注册 Type 并保持返回的 SSE，后续 POST 使用注册结果中的会话 token。Consumer 可按需查询目录，Call/Stream 前不强制查询。
 
 ```mermaid
 sequenceDiagram
@@ -116,11 +116,13 @@ sequenceDiagram
     end
 ```
 
-注册成功表示 provider 会话已建立，不构造实例，也不验证实例方法。目录响应只是注册快照，不预留容量，也不保证后续请求成功。
+注册只建立会话，不构造实例、探测方法或保证创建成功；首次 Call/Stream 才按需创建。
+
+目录只是当前注册快照，不枚举运行实例、不预留容量或保证后续可用；条目的 protocol 不承诺业务方法支持。
+
+v1 注册 params/result 和 Actor 条目均无 `capabilities`；旧注册参数即使为 false、null 或空对象也被拒绝，SDK 同样拒绝含该字段的注册结果。
 
 ### runtime/register：注册 Actor
-
-Provider 注册自己提供的 Actor，并建立后续接收创建、调用和流控制消息的连接。注册成功不创建实例；首次 Call 或 Stream 时按需创建。
 
 Provider → gateway，单条 HTTP POST，接受 SSE：
 
@@ -148,8 +150,6 @@ Gateway → provider，注册 SSE 的首帧返回 protocol、Type 和会话 toke
   }
 }
 ```
-
-连接随后保持打开，gateway 经它下发 create、call、stream 和流控制消息。注册成功不构造业务对象。
 
 ### runtime/actors：列出已注册的 Actor
 
@@ -184,7 +184,7 @@ Gateway 在原 HTTP 响应中返回当前 Actor 目录快照：
 
 ## Call 过程
 
-Provider 注册后，consumer 发起 Call，并在原 HTTP 请求上等待结果。需要激活时，gateway 先选定 generation 并创建实例，再执行调用。下图展示成功路径，后续方法说明沿用这个顺序。
+Consumer 发起 Call，在原 HTTP 请求上等待结果；需要激活时，gateway 先选代、创建实例，再执行调用。
 
 ```mermaid
 sequenceDiagram
@@ -194,21 +194,21 @@ sequenceDiagram
     C->>G: actor/call，id=c:1（HTTP POST）
     opt 实例需要激活
         G->>G: 经 actorx-dist 选定 generation
-        G-->>P: actor/create，id=g:create-1（注册 SSE）
+        G-->>P: actor/create，id=r:1（注册 SSE）
         P->>P: 构造并验证实例
-        P->>G: 创建结果，id=g:create-1（HTTP POST）
+        P->>G: 创建结果，id=r:1（HTTP POST）
     end
-    G-->>P: actor/call，id=g:call-1（注册 SSE）
+    G-->>P: actor/call，id=r:2（注册 SSE）
     P->>P: 等待 handle(message) 返回
-    P->>G: 结果，id=g:call-1（HTTP POST）
+    P->>G: 结果，id=r:2（HTTP POST）
     G-->>C: 结果，id=c:1（原 HTTP JSON 响应）
 ```
 
-已有就绪实例会跳过 `actor/create`；创建失败则不执行调用。Consumer 与 provider 使用独立 RPC ID，由 gateway 关联。Call 成功返回固定地址和一个 JSON 值；业务失败沿相同路径返回错误。HTTP 204 只确认 provider POST 的交接，Call 结果才证明本次 handler 已返回。
+已有就绪实例跳过 `actor/create`；创建失败则不执行调用。Stream 首次激活也使用这个方法。
 
 ### actor/call：发起调用
 
-Consumer → gateway，普通 HTTP POST。首次请求可省略 generation；此时原 HTTP 请求等待最终结果：
+Consumer → gateway，普通 HTTP POST；本例省略 generation：
 
 ```json
 {
@@ -235,7 +235,7 @@ Gateway → provider，经既有注册 SSE 发送选定的完整地址和创建�
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:create-1",
+  "id": "r:1",
   "method": "actor/create",
   "params": {
     "address": {
@@ -254,7 +254,7 @@ Provider 创建并验证真实对象，再通过 HTTP POST 回答。同一完整
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:create-1",
+  "id": "r:1",
   "result": {
     "address": {
       "version": 1,
@@ -266,8 +266,6 @@ Provider 创建并验证真实对象，再通过 HTTP POST 回答。同一完整
 }
 ```
 
-只有创建成功后才执行；Stream 首次激活也使用这个方法。
-
 ### actor/call：执行 Call
 
 Gateway → provider，经注册 SSE 下发输入、固定地址和剩余期限：
@@ -275,7 +273,7 @@ Gateway → provider，经注册 SSE 下发输入、固定地址和剩余期限�
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:call-1",
+  "id": "r:2",
   "method": "actor/call",
   "params": {
     "address": {
@@ -297,7 +295,7 @@ Provider 调用 `handle(message)`，等待一个 JSON 值，通过 HTTP POST 返
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:call-1",
+  "id": "r:2",
   "result": {
     "address": {
       "version": 1,
@@ -312,31 +310,13 @@ Provider 调用 `handle(message)`，等待一个 JSON 值，通过 HTTP POST 返
 }
 ```
 
-Gateway 将结果关联回原 `actor/call` 请求，以 consumer 的 ID 回答：
+Gateway 在原 HTTP 响应中返回相同的 `result`，将响应 ID 改为 consumer 的 `"c:1"`。
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "c:1",
-  "result": {
-    "address": {
-      "version": 1,
-      "type": "demo.chat",
-      "id": "session-42",
-      "generation": "AAAAAAAAAAAAAAAAAAAAAA"
-    },
-    "value": {
-      "text": "complete answer"
-    }
-  }
-}
-```
-
-Consumer 保存 generation，后续操作固定该代次。`value` 也可以是 null。业务失败走同一关联路径返回 `error`，见[错误](#错误)。结果证明本次 handler 已返回，不证明额外后台工作已经结束。
+Call 成功证明本次 handler 已返回，不保证额外后台工作已结束。业务失败返回 `error`，见[错误](#错误)。
 
 ## Stream 过程
 
-Provider 注册后，consumer 通过 SSE 打开 Stream。Gateway 先建立流控制通道，再按需激活实例并执行。下图展示正常结束的流程；后续方法示例使用已经选定 generation 的一项流。
+Consumer 通过 SSE 打开 Stream；gateway 先建立控制通道，再按需激活实例并执行。以下方法示例使用已选定 generation 的一项流。
 
 ```mermaid
 sequenceDiagram
@@ -351,7 +331,7 @@ sequenceDiagram
         G-->>P: actor/create（注册 SSE）
         P->>G: 创建结果（HTTP POST）
     end
-    G-->>P: actor/stream，id=g:stream-1（注册 SSE）
+    G-->>P: actor/stream，id=r:3（注册 SSE）
     P->>P: 迭代 handle_stream(message)
     par Provider 段
         loop 零到多个分片，受 provider 段窗口限制
@@ -359,7 +339,7 @@ sequenceDiagram
             G->>G: 代理 Write 将分片交入 actorx-dist
             G-->>P: stream/ack（注册 SSE）
         end
-        P->>G: 结果 + final_seq，id=g:stream-1（HTTP POST）
+        P->>G: 结果 + final_seq，id=r:3（HTTP POST）
     and Consumer 段
         loop 零到多个分片，受 consumer 段窗口限制
             G-->>C: stream/chunk（消费 SSE）
@@ -370,16 +350,14 @@ sequenceDiagram
     G-->>C: 结果 + final_seq，id=c:2（消费 SSE）
 ```
 
-两段分别使用独立的 ID、token、序号与 credit 账本，在有界流控下独立推进；provider 终态可能在 consumer 段仍有待消费项时到达。Provider credit 来自代理 Write 成功交入 actorx-dist，不证明最终 consumer 已消费。Provider 还必须等每次上行 POST 的 HTTP 204 后再发送下一项或终态；这份交接确认与 credit 不同。
+每次 Stream 产生零到多个 chunk，以及一个回答原请求的终态 result/error。两段独立推进，完成条件见[流控与终态](#流控与终态)。
 
-`stream/opened` 不含地址，不证明激活或执行成功。每次 Stream 产生零到多个 chunk，以及一个对应原请求 ID 的终态 result/error。成功须等待 consumer 确认所有项；错误可以丢弃排队项。没有合法终态时，EOF 不能视为成功。精确规则见[流控与终态](#流控与终态)。
-
-Gateway 为两段生成独立 RPC ID 和流 token，并维护映射；token 是 32 随机字节的规范无填充 base64url 编码。Consumer 不会获得 provider 的会话 token 或流 token。本例用以下值区分两段：
+Gateway 映射两段独立的 RPC ID、流 token、序号与 credit 账本。流 token 是 32 随机字节的规范无填充 base64url 编码；consumer 不会获得 provider 的会话 token 或流 token。示例取值：
 
 | 通信段 | 原请求 ID | stream_token |
 | --- | --- | --- |
 | consumer ↔ gateway | `c:2` | `AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA` |
-| gateway ↔ provider | `g:stream-1` | `AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE` |
+| gateway ↔ provider | `r:3` | `AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE` |
 
 ### actor/stream：发起 Stream
 
@@ -432,7 +410,7 @@ Gateway → provider，经注册 SSE 下发另一个 RPC ID、provider 段 token
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:stream-1",
+  "id": "r:3",
   "method": "actor/stream",
   "params": {
     "address": {
@@ -465,7 +443,7 @@ Provider → gateway，带会话 Header 的单条通知 POST；`request_id` 引�
   "jsonrpc": "2.0",
   "method": "stream/chunk",
   "params": {
-    "request_id": "g:stream-1",
+    "request_id": "r:3",
     "stream_token": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
     "address": {
       "version": 1,
@@ -481,11 +459,11 @@ Provider → gateway，带会话 Header 的单条通知 POST；`request_id` 引�
 }
 ```
 
-Gateway 校验后，以 consumer 段的 ID/token 和独立序号，经 consumer SSE 转发同一个 value；本例两段 seq 均为 1。通知没有自身的 id。`value` 必填但可为 null。Provider 必须等前次 POST 的 204 后再发送下一项或终态。
+Gateway 校验后，以 consumer 段的 ID/token 和独立序号，经 consumer SSE 转发同一个 value；本例两段 seq 均为 1。
 
 ### stream/ack：确认消费
 
-Consumer 处理完当前项、请求下一项时，向 gateway 单独 POST 通知，不带会话 Header：
+Consumer → gateway，单条通知 POST，不带会话 Header：
 
 ```json
 {
@@ -499,7 +477,7 @@ Consumer 处理完当前项、请求下一项时，向 gateway 单独 POST 通�
 }
 ```
 
-Gateway → provider 的 credit 使用 provider 段 ID/token，经注册 SSE 下发。两段确认独立：provider 段在代理 Write 成功交入 actorx-dist 时确认，不必等待最终 consumer 消费；具体时点见[流控与终态](#流控与终态)。
+Gateway → provider 的 ack 使用 provider 段 ID/token，经注册 SSE 下发；两段确认独立，时机见[流控与终态](#流控与终态)。
 
 ### 最终响应：结束 Stream
 
@@ -508,7 +486,7 @@ Gateway → provider 的 credit 使用 provider 段 ID/token，经注册 SSE 下
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:stream-1",
+  "id": "r:3",
   "result": {
     "address": {
       "version": 1,
@@ -521,29 +499,13 @@ Gateway → provider 的 credit 使用 provider 段 ID/token，经注册 SSE 下
 }
 ```
 
-Gateway 确认 consumer 段的项已消费后，在原 SSE 上用 `actor/stream` 的请求 ID 返回：
+Gateway 等 consumer 确认本段全部项后，经原 SSE 返回 ID 为 `"c:2"` 的成功响应；本例 `result` 与上面相同。
 
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "c:2",
-  "result": {
-    "address": {
-      "version": 1,
-      "type": "demo.chat",
-      "id": "session-42",
-      "generation": "AAAAAAAAAAAAAAAAAAAAAA"
-    },
-    "final_seq": 1
-  }
-}
-```
-
-`final_seq: 0` 表示合法空流。失败时使用同一 ID 返回 error，data 含本段 final_seq；已消费的部分结果不回滚。没有合法终态时不能把 EOF 当作成功。
+空流、部分失败和完成条件见[流控与终态](#流控与终态)。
 
 ### stream/cancel：提前取消
 
-流控制通道建立后，consumer 可以提前请求取消，结束继续消费。下图展示 provider 仍在执行时的取消路径；已经取得的确定终态会被保留。
+控制通道建立后，consumer 可请求取消本次执行：
 
 ```mermaid
 sequenceDiagram
@@ -561,7 +523,7 @@ sequenceDiagram
     Note over C,P: 取消确认不证明 handler 已退出
 ```
 
-取消仅影响本次 Stream，保留共享 Actor 和注册。HTTP 确认与取消传播独立，两者都不提供 handler 已退出的证据。原 Stream 按[终态与错误规则](#流控与终态)结清；迟到取消不会改写已经取得的确定终态。
+取消仅影响本次 Stream，保留共享 Actor/注册。HTTP 204 与取消传播独立，均不证明 handler 已退出；迟到取消不改写确定终态。原 Stream 按[终态与错误规则](#流控与终态)结清。
 
 Consumer → gateway，单条通知 POST，不带会话 Header：
 
@@ -576,7 +538,7 @@ Consumer → gateway，单条通知 POST，不带会话 Header：
 }
 ```
 
-Gateway 请求取消该次执行，并通过注册 SSE 用 provider 段 ID/token 向 provider 下发 cancel。它不停止共享 Actor；取消 POST 的 204 不证明 handler 已退出，确定终态也不被迟到取消覆盖。
+Gateway 通过注册 SSE，用 provider 段 ID/token 转发取消请求。
 
 ### 流控与终态
 
@@ -589,11 +551,19 @@ Gateway 请求取消该次执行，并通过注册 SSE 用 provider 段 ID/token
 | provider → gateway | 代理 StreamReply.Write 成功交入有界 actorx-dist Stream 后 |
 | gateway → consumer | 用户处理完当前项，请求下一项时 |
 
-provider credit 不证明最终 consumer 已消费。gateway 回调等待 consumer credit 才返回，慢消费经 actorx-dist 窗口传至 provider。上行 POST 仅做有界交接，不等待整条消费链。控制和终态使用有界预留空间，不占数据窗口。处理最后一项后仍须请求下一项，先确认该项再等待结束。
+Provider credit 不证明最终 consumer 已消费。Gateway 回调等待 consumer credit 才返回，慢消费经 actorx-dist 窗口传至 provider。上行 POST 只做有界交接，不等待整条消费链；provider 须等每次 POST 的 204 后再发下一项或终态，204 不代替 credit。
 
-成功终态的 `final_seq: N` 要求连续 N 项均已消费；N=0 是合法空流。成功不能越过已接受的排队项。错误在 data 中附已知 address 和本段 final_seq，可以丢弃尚未转发的排队项，已交给用户的部分结果不回滚。
+控制与终态使用数据窗口外的有界预留。处理最后一项后仍须请求下一项，先确认该项再等待结束。
 
-缺终态、断线、缺块或序号/身份矛盾，且业务可能已执行时，为 1004 `outcome_unknown`。确定终态不被迟到取消覆盖；provider 在终态 POST 后保留有界账本至全部确认、原期限或关闭。最后 credit 的传输失败不改写已取得且消费完的成功证据。
+三个完成事实分别判断：
+
+- **成功终态**：`final_seq: N` 表示本段正常产出 N 项，之后不再输出 chunk；N=0 是合法空流。终态可先于全部 ack 到达。
+- **本地成功**：合法成功终态已通过校验，连续 N 项均完成本地交付责任（应用消费或有界转交），不能跳过排队项。本地消费失败保留为本地失败，不抹去确定的产出结果。
+- **账本回收**：发送端保留未确认账本，直至全部 ack、原期限到达或连接/会话关闭。
+
+错误在 data 中附已知 address 和本段 final_seq，可以丢弃尚未完成本地交付的排队项，已交给用户的部分结果不回滚。
+
+缺终态、断线、缺块或序号/身份矛盾，且业务可能已执行时，为 1004 `outcome_unknown`。最后 credit 的传输失败不改写已校验且完成本地交付的成功证据。
 
 ## 期限与取消
 
@@ -609,7 +579,7 @@ provider credit 不证明最终 consumer 已消费。gateway 回调等待 consum
 
 Python 的 Stream `timeout` 接受 (0, 60] 秒，使用单调时钟约束等待；chunk/credit 不续期。handler 启动前过期为 1005，启动后超时且缺少可信终态为 1004。
 
-`stream/cancel` 只取消一个 Stream 请求，保留共享 Actor/注册；Call 暂无远端取消方法。取消 POST 的 204 不证明 handler 已退出。SDK 在用户任务实际退出前保留实例锁和执行槽，避免与同实例后续操作重叠；超时、断线也不证明外部副作用已结束。
+Call 暂无远端取消方法。SDK 在用户任务实际退出前保留实例锁和执行槽，避免同实例操作重叠；超时、取消或断线不证明外部副作用已结束。
 
 Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出 context 或显式 `await chunks.aclose()`；Runtime 关闭同样负责回收。Provider 断线会撤销注册、唤醒 pending 请求，不自动恢复。详细所有权与关闭顺序见[运行模型](runtime.zh.md#断线与关闭)。
 
@@ -638,13 +608,13 @@ Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出
 | --- | --- | --- |
 | 1000 | remote_error | 实例创建失败、handler 异常、无有效方法或返回形态非法 |
 | 1001 | full | 明确容量拒绝 |
-| 1002 | actor_unavailable | 无可用 Actor 注册，尚未投递业务工作 |
+| 1002 | actor_unavailable | 合法地址无法解析或无可用目标，业务 handler 尚未进入 |
 | 1003 | activation_unknown | 激活或选代证据不明 |
 | 1004 | outcome_unknown | 可能已执行，缺少可信终态 |
 | 1005 | deadline_exceeded | 确定的期限失败 |
 | 1006 | stopped | 确定的停止/关闭失败 |
 | 1007 | registration_conflict | 本地同 Type 已注册或正在撤销 |
-| 1008 | transport_mode | 不满足单条请求、SSE 或控制消息传输条件 |
+| 1008 | transport_mode | 当前通道不满足单条请求、SSE 或控制上下文建立条件 |
 | 1009 | canceled | 不含不明分类的取消 |
 | 1010 | owner_unavailable | actorx-dist owner 不可达，不自动接管 |
 | 1011 | contract | actorx-dist DTO/Type 契约不匹配 |
@@ -674,11 +644,13 @@ Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出
 }
 ```
 
-1013 必须带完整地址，Stream 必须是零项且 `final_seq: 0`。它证明所请求的方法没有进入，但对象构造可能已经发生。Python 抛 `UnsupportedOperationError` 并保存 generation，同一 Addr 可继续调用已支持的另一种操作；缺地址或矛盾终态按 1004 处理。它与未知 RPC 方法 -32601、实例创建或业务失败 1000 分别处理。
+1013 必须带完整地址，Stream 必须为零项且 `final_seq: 0`。它证明所请求的方法未进入，但可能已构造对象。Python 抛 `UnsupportedOperationError` 并保存 generation，同一 Addr 可继续调用另一种受支持操作；缺地址或矛盾终态按 1004 处理。
 
-经校验的 provider 错误 1000/1001/1004/1005/1009/1013 保留分类，其他合法应用错误归一为 1000；已知出站方法的标准 RPC 错误转为 1012。已知 kind/code 必须一致。异常类型、堆栈和任意 provider 扩展数据不穿过 actorx-dist，诊断最多 512 UTF-8 字节。
+参数结构或值非法使用 -32602；1002/1008 用于合法请求因地址/通道能力而在 handler 进入前被拒绝。已建立 Stream 的这两类拒绝必须无 chunk 且 `final_seq: 0`；建流前 JSON 拒绝可省略 final_seq。矛盾的终态证据按 1004 处理。
 
-确定的 provider 失败优先于稍后的停止/取消；无确定终态时按 outcome_unknown → activation_unknown → 具体框架错误分类。用户本地消费异常保留为本地失败。任何错误都不触发透明重试。
+经校验的 provider 错误 1000/1001/1002/1004/1005/1008/1009/1013 保留分类，其他合法应用错误归一为 1000；已知出站方法的标准 RPC 错误转为 1012。已知 kind/code 必须一致。异常类型、堆栈和任意 provider 扩展数据不穿过 actorx-dist，诊断最多 512 UTF-8 字节。
+
+确定的 provider 失败优先于稍后的停止/取消；无确定终态时按 outcome_unknown → activation_unknown → 具体框架错误分类。用户本地消费异常保留为本地失败。
 
 ## 限制与兼容
 
@@ -689,6 +661,8 @@ Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出
 | 编码 batch 响应 | 64 KiB |
 | JSON 嵌套 | 64 层 |
 | 每段未确认 chunk | 四项 / 32 KiB |
+
+当前未发布的 `actorx.remote/v1` 含不兼容调整，gateway 和 SDK 须配套升级。Stream 消息改用 `stream/opened`、`stream/chunk`、`stream/ack`、`stream/cancel`；原有的 `actor/stream_open`、`actor/chunk`、`actor/credit`、`actor/cancel` 不再作为 wire 别名接受。消息改名不改变其消息体、流控、取消及 HTTP 状态处理。
 
 执行容量、对象数量与队列限制见[运行模型](runtime.zh.md#资源限制)。address.version=1、jsonrpc="2.0" 和 actorx.remote/v1 各自描述不同层，互不联动。v1 固定提供两种通信操作，不协商 capabilities；SDK 删除旧 `stream=True` 参数。升级 gateway/SDK 不会清除已发布的 actorx-dist Type 契约，旧 Type 的处理见[迁移说明](runtime.zh.md#协议与-type-迁移)。Send、WebSocket、自动重连/重试和续读暂未实现。
 

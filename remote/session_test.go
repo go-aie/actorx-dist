@@ -5,13 +5,92 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-aie/actorx"
+	"github.com/go-aie/actorx-dist"
 	"github.com/go-aie/actorx-dist/remote/protocol"
 )
+
+func TestSessionRequestIDsFollowQueueOrder(t *testing.T) {
+	for range 2 { // a new registration starts its own sequence
+		s := newSession()
+		defer s.close()
+		ctx := testCtx(t)
+		done := make(chan error, 9)
+		for i := range 9 {
+			id := strconv.Itoa(i)
+			a := testAddress(id)
+			s.track(id)
+			go func() {
+				var err error
+				switch i % 3 {
+				case 0:
+					err = s.create(ctx, a)
+				case 1:
+					_, err = s.invoke(ctx, a, input(id))
+				case 2:
+					err = s.invokeStream(ctx, a, protocol.InvokeStream(input(id)), func(protocol.Chunk) error { return nil })
+				}
+				done <- err
+			}()
+		}
+		messages := make([]protocol.Message, 9)
+		for i := range messages {
+			m := await(t, s.events)
+			if string(m.ID) != `"r:`+strconv.Itoa(i+1)+`"` {
+				t.Fatalf("outbound ID order: %s", m.ID)
+			}
+			messages[i] = m
+		}
+		// Completion order does not constrain subsequent request numbering.
+		for i := len(messages) - 1; i >= 0; i-- {
+			m := messages[i]
+			var params protocol.CallParams
+			if err := json.Unmarshal(m.Params, &params); err != nil {
+				t.Fatal(err)
+			}
+			reply := success(m, params.Address, json.RawMessage(`null`))
+			if m.Method == protocol.Stream {
+				reply = protocol.Success(m.ID, protocol.StreamResult{Address: params.Address})
+			}
+			if err := s.accept(reply); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for range messages {
+			if err := await(t, done); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func TestSessionRequestSequenceExhaustionDoesNotDispatch(t *testing.T) {
+	s := newSession()
+	defer s.close()
+	s.requestSeq = protocol.MaxSequence
+	a := testAddress("counter")
+	s.track("counter")
+	ctx := testCtx(t)
+	for _, method := range []string{protocol.Create, protocol.Call, protocol.Stream} {
+		var err error
+		if method == protocol.Stream {
+			err = s.invokeStream(ctx, a, protocol.InvokeStream(input("counter")), func(protocol.Chunk) error { return nil })
+		} else {
+			_, err = s.exchange(ctx, method, a, "counter", json.RawMessage(`null`))
+		}
+		if !errors.Is(err, actorxdist.ErrProtocol) {
+			t.Fatal(method, err)
+		}
+	}
+	if len(s.events) != 0 || len(s.pending) != 0 || len(s.streams) != 0 || s.requestSeq != protocol.MaxSequence {
+		t.Fatal("exhausted sequence dispatched or retained work")
+	}
+}
 
 func testCtx(t *testing.T) context.Context {
 	t.Helper()
@@ -237,6 +316,51 @@ func TestCreateFailureSurvivesPendingAndIsScoped(t *testing.T) {
 	}
 	if r.session.evidence("outer-call", a).terminal {
 		t.Fatal("cleanup retained evidence")
+	}
+}
+
+func TestProviderRefusalsKeepClassification(t *testing.T) {
+	for _, code := range []int{protocol.ActorUnavailable, protocol.TransportMode} {
+		for _, method := range []string{protocol.Call, protocol.Stream} {
+			t.Run(protocol.Kind(code)+"/"+method, func(t *testing.T) {
+				g, r := fakeGateway(t, nil)
+				g.backend.call = func(ctx context.Context, a protocol.Address, in protocol.Invoke) (protocol.Address, protocol.Result, error) {
+					result, err := r.session.invoke(ctx, a, in)
+					if result.Validate() != nil {
+						t.Error("refusal did not survive DTO validation", result)
+					}
+					return a, result, err
+				}
+				g.backend.stream = func(ctx context.Context, a protocol.Address, in protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
+					return a, r.session.invokeStream(ctx, a, in, func(c protocol.Chunk) error { return yield(a, c) })
+				}
+				a := testAddress("refused")
+				done := make(chan error, 1)
+				ctx := testCtx(t)
+				go func() {
+					request := protocol.CallParams{Address: a, Input: json.RawMessage(`null`)}
+					if method == protocol.Call {
+						_, err := g.Call(ctx, request)
+						done <- err
+					} else {
+						_, err := g.Stream(ctx, request, func(protocol.Address, json.RawMessage) error {
+							t.Error("refusal delivered a chunk")
+							return nil
+						})
+						done <- err
+					}
+				}()
+				m := await(t, r.Events())
+				e := protocol.NewError(code, protocol.Kind(code), &a)
+				if method == protocol.Stream {
+					e = protocol.StreamError(e, 0)
+				}
+				if err := g.Accept(ctx, r.Info().SessionToken, protocol.ErrorResponse(m.ID, e)); err != nil {
+					t.Fatal(err)
+				}
+				rpcCode(t, await(t, done), code)
+			})
+		}
 	}
 }
 

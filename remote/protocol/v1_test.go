@@ -43,9 +43,9 @@ func TestV1WireVectors(t *testing.T) {
 	provider := CallParams{Address: a, Input: consumer.Input, DeadlineUnixMS: &ms}
 	values := map[string]any{
 		"consumer_call":   request(Call, "c:call-1", consumer),
-		"provider_call":   request(Call, "g:call-1", provider),
+		"provider_call":   request(Call, "r:2", provider),
 		"consumer_stream": request(Stream, "c:stream-1", consumer),
-		"provider_stream": request(Stream, "g:stream-1", StreamParams{
+		"provider_stream": request(Stream, "r:3", StreamParams{
 			CallParams:  provider,
 			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 			Window:      StreamWindow(),
@@ -128,8 +128,10 @@ func TestV1ProviderFailureWhitelist(t *testing.T) {
 	allowed := map[int]bool{
 		1000: true,
 		1001: true,
+		1002: true,
 		1004: true,
 		1005: true,
+		1008: true,
 		1009: true,
 		1013: true,
 	}

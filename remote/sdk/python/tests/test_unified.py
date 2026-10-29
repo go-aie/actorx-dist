@@ -82,19 +82,19 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                 yield value
 
         async with provider(Actor) as (_, reg, posts):
-            await exchange(reg, posts, "actor/create", "create")
+            await exchange(reg, posts, "actor/create", "r:1")
             for i in range(p.CAPACITY):
                 terminal, chunks = await exchange(
-                    reg, posts, "actor/stream", f"s:{i}", i
+                    reg, posts, "actor/stream", f"r:{i + 2}", i
                 )
                 self.assertEqual(chunks, [i])
                 self.assertEqual(terminal["result"]["final_seq"], 1)
-                await bounded(reg.streams[f"s:{i}"].work.job)
+                await bounded(reg.streams[f"r:{i + 2}"].work.job)
             self.assertFalse(reg.active)
             self.assertEqual(len(reg.streams), p.CAPACITY)
 
             terminal, chunks = await exchange(
-                reg, posts, "actor/stream", "full", "must-not-run"
+                reg, posts, "actor/stream", "r:10", "must-not-run"
             )
             self.assertEqual(terminal["error"]["code"], 1001)
             self.assertEqual(terminal["error"]["data"]["final_seq"], 0)
@@ -103,13 +103,13 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(reg.streams), p.CAPACITY)
 
             # Retained ledgers limit Streams, while Call still has execution room.
-            terminal, _ = await exchange(reg, posts, "actor/call", "call", "ok")
+            terminal, _ = await exchange(reg, posts, "actor/call", "r:11", "ok")
             self.assertEqual(terminal["result"]["value"], "ok")
             await reg.dispatch(
                 p.notification(
                     "stream/ack",
                     {
-                        "request_id": "s:0",
+                        "request_id": "r:2",
                         "stream_token": TOKEN,
                         "ack_seq": 1,
                     },
@@ -117,7 +117,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(len(reg.streams), p.CAPACITY - 1)
             terminal, chunks = await exchange(
-                reg, posts, "actor/stream", "replacement", "next"
+                reg, posts, "actor/stream", "r:12", "next"
             )
             self.assertEqual(chunks, ["next"])
             self.assertEqual(terminal["result"]["final_seq"], 1)
@@ -130,10 +130,10 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                 yield value
 
         async with provider(Actor) as (_, reg, posts):
-            await exchange(reg, posts, "actor/create", "create")
-            terminal, _ = await exchange(reg, posts, "actor/stream", "stream", ms=150)
+            await exchange(reg, posts, "actor/create", "r:1")
+            terminal, _ = await exchange(reg, posts, "actor/stream", "r:2", ms=150)
             self.assertEqual(terminal["result"]["final_seq"], 1)
-            self.assertIn("stream", reg.streams)
+            self.assertIn("r:2", reg.streams)
 
             async def expired():
                 while reg.streams:
@@ -171,7 +171,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(created, [])
                         for n in range(2):
                             m, _ = await exchange(
-                                reg, posts, "actor/create", f"create{n}"
+                                reg, posts, "actor/create", f"r:{n + 1}"
                             )
                             self.assertIn("result", m)
                         self.assertEqual(len(created), 1)
@@ -181,7 +181,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         for n, method in enumerate(
                             ("actor/call", "actor/stream", "actor/call")
                         ):
-                            m, chunks = await exchange(reg, posts, method, f"op{n}")
+                            m, chunks = await exchange(reg, posts, method, f"r:{n + 3}")
                             missing = (
                                 method == "actor/call" and mode == "stream"
                             ) or (method == "actor/stream" and mode == "call")
@@ -202,15 +202,17 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(created[0].count, count)
 
                         # Both a new ID and a new generation own separate instances.
-                        for a in (
-                            dict(ADDRESS, id="other"),
-                            dict(ADDRESS, generation="AQEBAQEBAQEBAQEBAQEBAQ"),
+                        for n, a in enumerate(
+                            (
+                                dict(ADDRESS, id="other"),
+                                dict(ADDRESS, generation="AQEBAQEBAQEBAQEBAQEBAQ"),
+                            )
                         ):
                             await exchange(
                                 reg,
                                 posts,
                                 "actor/create",
-                                "new-" + a["id"] + a["generation"],
+                                f"r:{n + 6}",
                                 address=a,
                             )
                         self.assertEqual(len(created), 3)
@@ -230,7 +232,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
         for factory in (fails, Neither, lambda: async_factory()):
             async with provider(factory) as (runtime, reg, posts):
                 self.assertFalse(reg.instances)
-                m, _ = await exchange(reg, posts, "actor/create", "bad")
+                m, _ = await exchange(reg, posts, "actor/create", "r:1")
                 self.assertEqual(m["error"]["code"], 1000)
                 self.assertEqual(m["error"]["data"]["address"], ADDRESS)
                 self.assertNotIn("secret", str(m))
@@ -284,25 +286,19 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                 return generate()
 
         async with provider(Actor) as (_, reg, posts):
-            await exchange(reg, posts, "actor/create", "create")
-            m, _ = await exchange(reg, posts, "actor/call", "awaitable", "ok")
+            await exchange(reg, posts, "actor/create", "r:1")
+            m, _ = await exchange(reg, posts, "actor/call", "r:2", "ok")
             self.assertEqual(m["result"]["value"], "ok")
-            for value in ("wrong", "error", "non-json"):
+            for n, value in enumerate(("wrong", "error", "non-json")):
                 m, _ = await exchange(
-                    reg, posts, "actor/call", "call-" + value, value
+                    reg, posts, "actor/call", f"r:{n + 3}", value
                 )
                 self.assertEqual(m["error"]["code"], 1000)
-            for value in (
-                "wrong",
-                "coroutine",
-                "error",
-                "non-json",
-                "partial",
-                "custom",
-                "empty",
+            for n, value in enumerate(
+                ("wrong", "coroutine", "error", "non-json", "partial", "custom", "empty")
             ):
                 m, chunks = await exchange(
-                    reg, posts, "actor/stream", value, value
+                    reg, posts, "actor/stream", f"r:{n + 6}", value
                 )
                 self.assertEqual(
                     chunks,
@@ -347,11 +343,11 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                 async with provider(Actor) as (_, reg, posts):
                     # Release even if an assertion fails, so cleanup can join user code.
                     try:
-                        await exchange(reg, posts, "actor/create", "create")
-                        await dispatch(reg, first_method, "first", "first", ms=50)
+                        await exchange(reg, posts, "actor/create", "r:1")
+                        await dispatch(reg, first_method, "r:2", "first", ms=50)
                         await bounded(entered.wait())
                         first = next(
-                            w for w in reg.active if w.message["id"] == "first"
+                            w for w in reg.active if w.message["id"] == "r:2"
                         )
                         other = (
                             "actor/call"
@@ -359,15 +355,15 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                             else "actor/stream"
                         )
 
-                        await dispatch(reg, other, "expired", "must-not-run", ms=50)
+                        await dispatch(reg, other, "r:3", "must-not-run", ms=50)
                         expired = next(
-                            w for w in reg.active if w.message["id"] == "expired"
+                            w for w in reg.active if w.message["id"] == "r:3"
                         )
                         if first.stream is not None:
                             await reg.dispatch(
                                 p.notification(
                                     "stream/cancel",
-                                    {"request_id": "first", "stream_token": TOKEN},
+                                    {"request_id": "r:2", "stream_token": TOKEN},
                                 )
                             )
                         await bounded(canceled.wait())
@@ -380,14 +376,14 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         self.assertIn(first, reg.active)
                         self.assertFalse(first.operation.done())
 
-                        await dispatch(reg, other, "next", "after-exit")
+                        await dispatch(reg, other, "r:4", "after-exit")
                         following = next(
-                            w for w in reg.active if w.message["id"] == "next"
+                            w for w in reg.active if w.message["id"] == "r:4"
                         )
                         # Seven queued requests plus the canceled handler fill all eight slots.
                         for i in range(6):
-                            await dispatch(reg, other, f"queued{i}", f"queued{i}")
-                        await dispatch(reg, other, "overflow", "must-not-run")
+                            await dispatch(reg, other, f"r:{i + 5}", f"queued{i}")
+                        await dispatch(reg, other, "r:11", "must-not-run")
                         # Flush scheduled operations up to a known event-loop barrier.
                         await asyncio.sleep(0)
                         self.assertEqual(len(reg.active), 8)
@@ -413,13 +409,13 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                             (ADDRESS["type"], ADDRESS["id"], ADDRESS["generation"])
                         ].actor.handle_stream = None
                         m, _ = await exchange(
-                            reg, posts, "actor/stream", "missing"
+                            reg, posts, "actor/stream", "r:12"
                         )
                         self.assertEqual(m["error"]["code"], 1013)
                         await reg.dispatch(
                             p.notification(
                                 "stream/cancel",
-                                {"request_id": "missing", "stream_token": TOKEN},
+                                {"request_id": "r:12", "stream_token": TOKEN},
                             )
                         )
                         self.assertTrue(posts.empty())

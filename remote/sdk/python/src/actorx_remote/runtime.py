@@ -15,7 +15,7 @@ from .addr import Addr
 from .provider_stream import ProviderStream
 from .errors import ProtocolError, RemoteError
 from .transports.http import HTTPTransport, check_status, frames, media_type, read_body
-from .types import RPCID, Actor, StreamActor, ActorFactory, Address, JSONValue
+from .types import Actor, StreamActor, ActorFactory, Address, JSONValue
 
 REGISTER_SECONDS = 5.0
 
@@ -184,7 +184,7 @@ class _Registration:
         self.closing = False
         self.instances: dict[tuple[str, str, str], _Instance] = {}
         self.active: set[_Work] = set()
-        self.seen: set[tuple[type[object], RPCID]] = set()
+        self.last_request_seq = 0
         self._close_task: asyncio.Task[None] | None = None
 
     async def run(self) -> None:
@@ -263,10 +263,10 @@ class _Registration:
 
         rpc_id = message.get("id")
         if "id" in message:
-            key = (type(rpc_id), rpc_id)
-            if key in self.seen:
-                raise ProtocolError("Reused provider request ID")
-            self.seen.add(key)
+            seq = p.provider_request_sequence(rpc_id)
+            if seq <= self.last_request_seq:
+                raise ProtocolError("Reused or out-of-order provider request ID")
+            self.last_request_seq = seq
 
         if message["method"] not in (
             "actor/create",
@@ -517,6 +517,5 @@ class _Registration:
         for stream in list(self.streams.values()):
             stream.remove()
         self.instances.clear()
-        self.seen.clear()
         self.factory = None
         self.token = None

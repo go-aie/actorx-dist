@@ -72,7 +72,6 @@ func (r *Runtime) Register(ctx context.Context, actorType string, factory ActorF
 		done:      make(chan struct{}),
 		instances: make(map[Address]*providerInstance),
 		active:    make(map[*providerWork]struct{}),
-		seen:      make(map[string]struct{}),
 		streams:   make(map[string]*providerStream),
 		replies:   make(chan providerReply, providerCapacity),
 	}
@@ -118,12 +117,12 @@ type registration struct {
 	done      chan struct{}
 	jobs      sync.WaitGroup
 
-	mu        sync.Mutex // protects instances, active execution slots and streams
-	instances map[Address]*providerInstance
-	active    map[*providerWork]struct{}
-	streams   map[string]*providerStream
-	seen      map[string]struct{} // only the SSE reader accesses request IDs
-	replies   chan providerReply
+	mu             sync.Mutex // protects instances, active execution slots and streams
+	instances      map[Address]*providerInstance
+	active         map[*providerWork]struct{}
+	streams        map[string]*providerStream
+	lastRequestSeq uint64 // only the SSE reader accesses this session's sequence
+	replies        chan providerReply
 }
 
 func (p *registration) run(description string) {
@@ -137,7 +136,6 @@ func (p *registration) run(description string) {
 		clear(p.active)
 		p.factory = nil
 		p.mu.Unlock()
-		clear(p.seen)
 		p.token = ""
 		p.runtime.mu.Lock()
 		if p.runtime.registrations[p.actorType] == p {

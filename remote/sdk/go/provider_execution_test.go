@@ -207,8 +207,9 @@ func TestProviderCloseWaitCancellationKeepsCleanupResponsibility(t *testing.T) {
 	queued := g.send("actor/call", selected, nil, time.Now().Add(5*time.Second))
 
 	// Unknown method response proves the queued job was admitted first.
-	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON("barrier"), Method: "unknown"})
-	g.response(mustJSON("barrier"))
+	barrier := g.nextID()
+	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: barrier, Method: "unknown"})
+	g.response(barrier)
 	q := g.work(queued, selected.Type)
 
 	// Canceling a wait must leave the runtime responsible for joining user code.
@@ -278,8 +279,9 @@ func TestProviderBlockedFactoryRetainsExecutionOwnership(t *testing.T) {
 	waitValue(t, w.settled)
 	assertProviderCode(t, *w.terminal, 1004)
 	next := g.send("actor/create", selected, nil, time.Now().Add(5*time.Second))
-	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON("barrier"), Method: "unknown"})
-	g.response(mustJSON("barrier"))
+	barrier := g.nextID()
+	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: barrier, Method: "unknown"})
+	g.response(barrier)
 	if factories.Load() != 1 {
 		t.Fatal("duplicate create bypassed lock")
 	}
@@ -323,7 +325,7 @@ func TestProviderResponsePOSTHasOriginalDeadlineAndCannotBlockSSE(t *testing.T) 
 	var attempts atomic.Int32
 	g.mu.Lock()
 	g.replyHook = func(req *http.Request, m wire.Message) (*http.Response, error) {
-		if string(m.ID) != `"barrier"` {
+		if m.Error == nil {
 			attempts.Add(1)
 			deadline, _ := req.Context().Deadline()
 			posted <- deadline
@@ -339,8 +341,9 @@ func TestProviderResponsePOSTHasOriginalDeadlineAndCannotBlockSSE(t *testing.T) 
 		t.Fatal("POST renewed deadline")
 	}
 	w := g.work(id, selected.Type)
-	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON("barrier"), Method: "unknown"})
-	assertProviderCode(t, g.response(mustJSON("barrier")), -32601)
+	barrier := g.nextID()
+	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: barrier, Method: "unknown"})
+	assertProviderCode(t, g.response(barrier), -32601)
 	waitValue(t, w.done)
 	assertProviderCode(t, *w.terminal, 0)
 	if attempts.Load() != 1 {
@@ -365,10 +368,10 @@ func TestProviderRejectionQueueIsBounded(t *testing.T) {
 	}
 	g.mu.Unlock()
 	b := g.stream(selected.Type)
-	b.send(wire.Message{JSONRPC: "2.0", ID: mustJSON("blocked"), Method: "unknown"})
+	b.send(wire.Message{JSONRPC: "2.0", ID: g.nextID(), Method: "unknown"})
 	waitValue(t, posted)
-	for i := range 9 {
-		b.send(wire.Message{JSONRPC: "2.0", ID: mustJSON(i), Method: "unknown"})
+	for range 9 {
+		b.send(wire.Message{JSONRPC: "2.0", ID: g.nextID(), Method: "unknown"})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

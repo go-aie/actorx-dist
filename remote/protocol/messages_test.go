@@ -67,11 +67,11 @@ func TestActorMethodVectors(t *testing.T) {
 			ToGateway,
 		},
 		{
-			`{"jsonrpc":"2.0","id":"g:create-1","method":"actor/create","params":{"address":` + fixedAddress + `,"deadline_unix_ms":1890000000000}}`,
+			`{"jsonrpc":"2.0","id":"r:1","method":"actor/create","params":{"address":` + fixedAddress + `,"deadline_unix_ms":1890000000000}}`,
 			ToProvider,
 		},
 		{
-			`{"jsonrpc":"2.0","id":"g:invoke-1","method":"actor/call","params":{"address":` + fixedAddress + `,"input":null,"deadline_unix_ms":1890000000000}}`,
+			`{"jsonrpc":"2.0","id":"r:2","method":"actor/call","params":{"address":` + fixedAddress + `,"input":null,"deadline_unix_ms":1890000000000}}`,
 			ToProvider,
 		},
 	}
@@ -227,7 +227,7 @@ func TestResultFailureAndProviderErrors(t *testing.T) {
 			t.Errorf("%s: %v", tt.raw, err)
 		}
 	}
-	for _, code := range []int{RemoteError, Full, OutcomeUnknown, DeadlineExceeded, Canceled, 42, Stopped} {
+	for _, code := range []int{RemoteError, Full, ActorUnavailable, OutcomeUnknown, DeadlineExceeded, TransportMode, Canceled, 42, Stopped} {
 		e := NewError(code, strings.Repeat("界", 180), nil)
 		f, err := NormalizeProviderError(e)
 		if err != nil || len(f.Message) > 512 {
@@ -243,6 +243,8 @@ func TestResultFailureAndProviderErrors(t *testing.T) {
 	}
 	for _, e := range []*Error{
 		NewError(MethodNotFound, "wrong method", nil),
+		{Code: ActorUnavailable, Data: json.RawMessage(`{"kind":"remote_error"}`)},
+		{Code: TransportMode, Data: json.RawMessage(`{"kind":"remote_error"}`)},
 		{
 			Code:    Full,
 			Message: "x",

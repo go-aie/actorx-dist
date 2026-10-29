@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"sync"
 
 	"github.com/go-aie/actorx"
@@ -44,6 +45,7 @@ type session struct {
 	life             context.Context
 	cancel           context.CancelFunc
 	closed           bool
+	requestSeq       uint64 // assigned under mu in outbound queue order
 	streams          map[string]*providerStream
 	events           chan protocol.Message
 	pending          map[string]*pending
@@ -162,6 +164,21 @@ func (s *session) invoke(ctx context.Context, a protocol.Address, input protocol
 	return s.exchange(ctx, protocol.Call, a, input.RequestID, json.RawMessage(input.Content))
 }
 
+// requestLocked allocates a session-local ID. Gaps are legal, but IDs never wrap
+// or go backwards. The caller holds mu through enqueue to preserve wire order.
+func (s *session) requestLocked(method string, params any) (protocol.Message, error) {
+	if s.requestSeq == protocol.MaxSequence {
+		return protocol.Message{}, actorxdist.ErrProtocol
+	}
+	id := "r:" + strconv.FormatUint(s.requestSeq+1, 10)
+	m, err := protocol.NewRequest(method, id, params)
+	if err != nil {
+		return protocol.Message{}, actorxdist.ErrProtocol
+	}
+	s.requestSeq++
+	return m, nil
+}
+
 func (s *session) exchange(ctx context.Context, method string, a protocol.Address, requestID string, input json.RawMessage) (protocol.Result, error) {
 	if ctx == nil || a.Validate(true) != nil {
 		return protocol.Result{}, actorxdist.ErrProtocol
@@ -177,14 +194,6 @@ func (s *session) exchange(ctx context.Context, method string, a protocol.Addres
 	if method == protocol.Call {
 		ms := deadline.UnixMilli()
 		params = protocol.CallParams{Address: a, Input: input, DeadlineUnixMS: &ms}
-	}
-	id, err := opaque()
-	if err != nil {
-		return protocol.Result{}, err
-	}
-	message, err := protocol.NewRequest(method, id, params)
-	if err != nil {
-		return protocol.Result{}, actorxdist.ErrProtocol
 	}
 	p := &pending{
 		method:    method,
@@ -218,6 +227,13 @@ func (s *session) exchange(ctx context.Context, method string, a protocol.Addres
 		s.mu.Unlock()
 		return protocol.Result{}, actorxdist.ErrProtocol
 	}
+	message, err := s.requestLocked(method, params)
+	if err != nil {
+		s.mu.Unlock()
+		return protocol.Result{}, err
+	}
+	var id string
+	_ = json.Unmarshal(message.ID, &id)
 
 	// Publish pending before visibility. Accept/close and nonblocking enqueue share
 	// this mutex, so a full queue cannot record a dispatch or race channel close.

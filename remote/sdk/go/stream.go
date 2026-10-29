@@ -391,13 +391,17 @@ func (s *Stream) acceptTerminal(m wire.Message) error {
 		e := m.Error
 		var data map[string]json.RawMessage
 		_ = json.Unmarshal(e.Data, &data)
+		refused := e.Code == 1002 || e.Code == 1008
+		if refused && s.seq != 0 {
+			return protocolError()
+		}
 		if e.Code == 1013 {
 			seq, err := wire.Sequence(data["final_seq"])
 			if err != nil || seq != 0 || s.seq != 0 || data["address"] == nil {
 				return protocolError()
 			}
 		}
-		if s.token != "" {
+		if s.token != "" || refused && data["final_seq"] != nil {
 			seq, err := wire.Sequence(data["final_seq"])
 			if err != nil || seq != s.seq {
 				return protocolError()

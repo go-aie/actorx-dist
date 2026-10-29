@@ -35,8 +35,7 @@ func (a *dualActor) HandleStream(_ context.Context, _ any, w StreamWriter) error
 }
 
 func (g *providerGateway) sendStream(a Address, input any, deadline time.Time) json.RawMessage {
-	g.serial++
-	id := mustJSON(g.serial)
+	id := g.nextID()
 	g.stream(a.Type).send(wire.Message{
 		JSONRPC: "2.0",
 		ID:      id,

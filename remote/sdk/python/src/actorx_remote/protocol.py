@@ -64,6 +64,15 @@ KINDS.update(
 )
 
 
+def provider_request_sequence(rpc_id: object) -> int:
+    """Parse the canonical session-local Gateway request ID."""
+    if isinstance(rpc_id, str) and re.fullmatch(r"r:[1-9][0-9]{0,15}", rpc_id):
+        seq = int(rpc_id[2:])
+        if seq <= 2**53 - 1:
+            return seq
+    raise ProtocolError("Invalid provider request ID")
+
+
 def encode(value: object, *, _check_limit: bool = True) -> bytes:
     def emit(v: object, depth: int = 0) -> str:
         if depth > 64:

@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 )
 
 // MaxSequence is the largest integer represented exactly by all protocol peers.
@@ -46,6 +48,18 @@ func Sequence(raw json.RawMessage) (uint64, error) {
 		return 0, fmt.Errorf("invalid sequence")
 	}
 	return n, nil
+}
+
+// ProviderRequestSequence parses the canonical session-local Gateway request ID.
+func ProviderRequestSequence(raw json.RawMessage) (uint64, error) {
+	var id string
+	if json.Unmarshal(raw, &id) == nil && strings.HasPrefix(id, "r:") {
+		seq, err := strconv.ParseUint(id[2:], 10, 64)
+		if err == nil && seq > 0 && seq <= MaxSequence && id == "r:"+strconv.FormatUint(seq, 10) {
+			return seq, nil
+		}
+	}
+	return 0, fmt.Errorf("invalid provider request ID")
 }
 
 // IDKey preserves ID types and string escapes without float conversion.

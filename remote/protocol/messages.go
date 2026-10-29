@@ -118,7 +118,7 @@ func NewResult(value json.RawMessage, failure *Failure) Result {
 
 func failureCode(code int) bool {
 	switch code {
-	case RemoteError, Full, OutcomeUnknown, DeadlineExceeded, Canceled, UnsupportedOperation:
+	case RemoteError, Full, ActorUnavailable, OutcomeUnknown, DeadlineExceeded, TransportMode, Canceled, UnsupportedOperation:
 		return true
 	}
 	return false

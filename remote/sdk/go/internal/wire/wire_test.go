@@ -42,6 +42,11 @@ func TestModuleVectors(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				if name == "provider_call" || name == "provider_stream" {
+					if _, err := ProviderRequestSequence(m.ID); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if m.Error != nil && ValidateError(m.Error) != nil {
 					t.Fatal("invalid vector error")
 				}
