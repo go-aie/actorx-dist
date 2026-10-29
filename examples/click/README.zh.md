@@ -1,10 +1,10 @@
-# Client → Button → Counter
+# Click
 
-[English](README.md) | 中文 · [核心概念](../../docs/concepts.zh.md)
+[English](README.md) | 中文
 
 actors.go 定义 Button、Counter、各自的消息和 Spec；main.go 负责参数、Runtime 生命周期及三个进程角色：button 仅注册 `rt.Register(ctx, ButtonSpec)`，counter 仅注册 `rt.Register(ctx, CounterSpec)`，client 不注册 Actor。默认角色为 client。
 
-启动[开发 NATS 服务](../../README.zh.md)，再从 actorx-dist 仓库根目录，在三个独立终端运行：
+启动[开发 NATS 服务](../counter/README.zh.md#启动-nats)，再从 actorx-dist 仓库根目录，在三个独立终端运行：
 
 ```sh
 # 终端 1：等待 "button worker ready"。

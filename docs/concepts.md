@@ -41,7 +41,7 @@ Self is installed before Started and retains identity during shutdown. It perfor
 
 WithContext(parent) adopts the new parent's deadline, cancellation and values while preserving capability and Self. Do not retain contexts across requests. Obtain addresses before starting `actorx.StartTask(ctx, ...)`; workers communicate using their task context.
 
-`ctx.Spawn` creates a local instance and returns actorx.Addr. Children and descendants have addressing capability but no logical identity: Self returns actorx.ErrSetup. They inherit neither a parent generation nor stop propagation. Address logical objects with `dctx.Addr`; see [Button → Counter](../examples/click/README.md).
+`ctx.Spawn` creates a local instance and returns actorx.Addr. Children and descendants have addressing capability but no logical identity: Self returns actorx.ErrSetup. They inherit neither a parent generation nor stop propagation. Address logical objects with `dctx.Addr`; see [Click](../examples/click/README.md).
 
 ## Address transfer
 

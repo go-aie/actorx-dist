@@ -65,7 +65,7 @@ Stream consumption acknowledgements publish to the owner inbox advertised in chu
 
 For ordinary shutdown, join the owner's Runtime.Close. After a crash or forced exit, first use your process/container platform to fence the old process, outstanding work and business subscriptions. Disconnection, suspension, TTL or a failed probe does not prove fencing. The command neither kills processes nor restores business state.
 
-The following uses the README's local development service. Build from the actorx-dist repository root and inspect without mutation. The tool creates no Runtime, Factory or business subscriptions. For the authenticated profile above, use `nats://dev:change-me@127.0.0.1:4222` or supply a credentials file.
+The following uses the [Counter example's local development service](../examples/counter/README.md#start-nats). Build from the actorx-dist repository root and inspect without mutation. The tool creates no Runtime, Factory or business subscriptions. For the authenticated profile above, use `nats://dev:change-me@127.0.0.1:4222` or supply a credentials file.
 
 ```sh
 go build -o /tmp/dist-recover ./cmd/dist-recover

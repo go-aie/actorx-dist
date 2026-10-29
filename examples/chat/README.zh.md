@@ -1,10 +1,10 @@
 # 跨进程流式聊天
 
-[English](README.md) | 中文 · [模块](../../README.zh.md)
+[English](README.md) | 中文
 
 从另一个进程中的 Assistant 逐词接收模拟回答，无需模型或凭据。业务流程与核心 [chat 示例](https://github.com/go-aie/actorx/blob/main/examples/chat/README.zh.md) 一致；actorx-dist 增加 NATS 传输、逻辑寻址和工作进程注册。
 
-需要 Go 1.27+。先启动[开发 NATS 服务](../../README.zh.md#实际运行)，再从 actorx-dist 仓库根目录，在两个独立终端运行：
+需要 Go 1.27+。先启动[开发 NATS 服务](../counter/README.zh.md#启动-nats)，再从 actorx-dist 仓库根目录，在两个独立终端运行：
 
 ```sh
 # 终端 1：等待 "Assistant worker ready"。

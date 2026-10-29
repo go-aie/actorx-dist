@@ -41,7 +41,7 @@ Self 在 Started 前已安装，关闭期间仍保留身份；无 I/O，成功�
 
 WithContext(parent) 采用新 parent 的期限、取消和值，同时保留能力与 Self。上下文不跨请求保存；启动 `actorx.StartTask(ctx, ...)` 前取得所需地址，worker 使用任务 context 通信。
 
-`ctx.Spawn` 创建本地实例并返回 actorx.Addr。子对象及后代有寻址能力但没有逻辑身份，Self 返回 actorx.ErrSetup；不继承父 generation，也不建立停止传播。逻辑对象通过 `dctx.Addr` 寻址，见 [Button → Counter](../examples/click/README.zh.md)。
+`ctx.Spawn` 创建本地实例并返回 actorx.Addr。子对象及后代有寻址能力但没有逻辑身份，Self 返回 actorx.ErrSetup；不继承父 generation，也不建立停止传播。逻辑对象通过 `dctx.Addr` 寻址，见 [Click](../examples/click/README.zh.md)。
 
 ## 地址传递
 

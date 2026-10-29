@@ -1,10 +1,10 @@
-# Client → Button → Counter
+# Click
 
-English | [中文](README.zh.md) · [Concepts](../../docs/concepts.md)
+English | [中文](README.zh.md)
 
 actors.go defines Button, Counter, their messages and their Specs; main.go handles flags, Runtime lifetime and three process roles: button registers only `rt.Register(ctx, ButtonSpec)`, counter registers only `rt.Register(ctx, CounterSpec)`, and client registers no Actors. The default role is client.
 
-Start the [development NATS server](../../README.md), then run from the actorx-dist repository root in three separate terminals:
+Start the [development NATS server](../counter/README.md#start-nats), then run from the actorx-dist repository root in three separate terminals:
 
 ```sh
 # Terminal 1: wait for "button worker ready".

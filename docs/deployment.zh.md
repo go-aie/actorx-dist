@@ -65,7 +65,7 @@ Stream 消费确认发布到 chunk 中携带的拥有者 inbox；双方均须具
 
 正常停机先等待所属 Runtime.Close。崩溃或强制退出后，先在进程管理器/容器平台确认旧进程、后台工作及业务订阅不会重新生效；断网、暂停、TTL 或一次探测失败均不足以证明隔离。恢复命令不负责自动终止进程，也不接管业务状态。
 
-以下以 README 的本机开发服务为例，从 actorx-dist 仓库根目录构建并只读检查。工具不创建 Runtime、Factory 或业务订阅；使用上面的认证配置时，将 URL 改为 `nats://dev:change-me@127.0.0.1:4222` 或提供凭据文件。
+以下以 [Counter 示例的本机开发服务](../examples/counter/README.zh.md#启动-nats)为例，从 actorx-dist 仓库根目录构建并只读检查。工具不创建 Runtime、Factory 或业务订阅；使用上面的认证配置时，将 URL 改为 `nats://dev:change-me@127.0.0.1:4222` 或提供凭据文件。
 
 ```sh
 go build -o /tmp/dist-recover ./cmd/dist-recover

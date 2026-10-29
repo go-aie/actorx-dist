@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-Actorx Distributed is a distributed actor framework for Go built on [Actorx](https://github.com/go-aie/actorx/blob/main/README.md) and [NATS](https://nats.io/). It lets applications access stateful actors across processes by type and business ID, creating instances on demand.
+Actorx Distributed is a distributed actor framework for Go built on [Actorx](https://github.com/go-aie/actorx) and [NATS](https://nats.io/). It lets applications access stateful actors across processes by type and business ID, creating instances on demand.
 
 Actorx handles actor execution within each process, NATS carries messages between processes, and JetStream KV coordinates instance ownership. Actors support Send, Call and Stream for one-way messages, request/reply and streaming results.
 
@@ -60,57 +60,16 @@ fmt.Println(n) // 5 for a new counter
 
 `Addr("counter", "orders-42")` creates a logical address without starting an actor. The first Send, Call or Stream finds or activates the instance; the framework ensures unique ownership for each type and ID.
 
-## Run the example
-
-Requires Go 1.27 and [NATS Server v2.10.18](https://github.com/nats-io/nats-server/releases/tag/v2.10.18). Install the server for your platform and make sure `nats-server` is on your PATH. Run all commands below from the actorx-dist repository root.
-
-### Start NATS
-
-In terminal 1, start NATS with the development configuration, which enables JetStream on local port 4222:
-
-```sh
-nats-server -c examples/nats.conf -sd /tmp/dist-counter
-```
-
-Keep this terminal running for the examples below.
-
-### Run Counter
-
-In terminal 2, start a worker and wait for `Counter worker ready`:
-
-```sh
-go run ./examples/counter -role worker
-```
-
-In terminal 3, run the client:
-
-```sh
-go run ./examples/counter -role client -id orders-42
-```
-
-For a new counter ID, the output is:
-
-```text
-5
-10
-```
-
-The client runs two rounds, each using Send to add 2 and Call to add 3 and return the total. Run it again while the same worker is running to get 15, then 20: the counter retains its state between client runs.
-
-### Shut down
-
-The client exits automatically without stopping the counter. To finish, press Ctrl-C in terminal 2 and wait for the worker and its actors to exit, then press Ctrl-C in terminal 1 to stop NATS.
-
 State lives in worker memory and disappears on instance exit. Unreachable owners are not replaced automatically; see [explicit recovery](docs/deployment.md#explicit-recovery-and-storage-repair) after forced exit.
 
-## More examples
+## Examples
 
-Each example uses the same NATS service and includes its own run instructions:
+Start with Counter for environment setup, run commands, expected output and shutdown. All examples can share the same NATS service.
 
 | Example | What it teaches |
 | --- | --- |
-| [Counter](examples/counter/README.md) | Multiple workers, unique ownership for one ID and independent state for different IDs. |
-| [Client → Button → Counter](examples/click/README.md) | Actor composition across independent processes. |
+| [Counter](examples/counter/README.md) (start here) | Cross-process calls, retained state and multiple workers. |
+| [Click](examples/click/README.md) | Button calls Counter to compose actors across processes. |
 | [Chat](examples/chat/README.md) | Cross-process Stream and incremental output with a slow consumer. |
 
 ## Learn more

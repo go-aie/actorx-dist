@@ -1,10 +1,10 @@
 # Cross-process streaming chat
 
-English | [中文](README.zh.md) · [Module](../../README.md)
+English | [中文](README.zh.md)
 
 Stream a simulated answer word by word from an Assistant in another process. No model or credentials are needed. The business flow matches the core [chat example](https://github.com/go-aie/actorx/blob/main/examples/chat/README.md); actorx-dist adds NATS transport, logical addressing and worker registration.
 
-Requires Go 1.27+. Start the [development NATS server](../../README.md#run-the-example), then run from the actorx-dist repository root in two separate terminals:
+Requires Go 1.27+. Start the [development NATS server](../counter/README.md#start-nats), then run from the actorx-dist repository root in two separate terminals:
 
 ```sh
 # Terminal 1: wait for "Assistant worker ready".
