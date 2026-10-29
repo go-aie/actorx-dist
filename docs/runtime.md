@@ -18,7 +18,7 @@ registration, err := rt.Register(ctx, CounterSpec)
 err = registration.Unregister(cleanupCtx)
 ```
 
-Runtime owns registrations, capacity, Factories and shutdown cleanup, so registration uses `rt.Register(ctx, spec)`. The returned Registration identifies that particular registration and owns independent withdrawal; an old handle cannot affect a replacement with the same Type. `ActorSpec[T]` retains the concrete Actor type through a Go 1.27 generic method.
+Runtime owns registrations, capacity, Factories and shutdown cleanup, so registration uses `rt.Register(ctx, spec)`. The returned Registration identifies that particular registration and owns independent withdrawal; an old handle cannot affect a replacement with the same Type. `ActorSpec[T]` retains the concrete Actor type through a Go 1.27 generic method. Its optional Description accepts valid UTF-8 up to 512 bytes and does not affect the contract.
 
 NewRuntime initializes execution, the connection and Registry. Register validates ActorSpec, publishes the immutable contract and installs the Factory and control/activation subscriptions. Success includes Flush and constructs no business instances. Even when all Types are known before startup, register them through this API. Registration uses a five-second default total budget, capped at sixty seconds with an explicit deadline; Runtime.Close also cancels installation.
 

@@ -4,12 +4,93 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-aie/actorx"
 )
+
+func TestRegistrationDescriptionValidation(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		description string
+		invalid     bool
+	}{
+		{name: "empty"},
+		{name: "UTF-8", description: "计数器"},
+		{name: "512 ASCII bytes", description: strings.Repeat("a", 512)},
+		{name: "512 UTF-8 bytes", description: strings.Repeat("界", 170) + "ab"},
+		{name: "513 ASCII bytes", description: strings.Repeat("a", 513), invalid: true},
+		{name: "513 UTF-8 bytes", description: strings.Repeat("界", 171), invalid: true},
+		{name: "invalid UTF-8", description: string([]byte{0xff}), invalid: true},
+		{name: "incomplete UTF-8", description: string([]byte{0xe7, 0x95}), invalid: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rt := testRuntime(t)
+			r, err := rt.Register(testContext(t), ActorSpec[*counter]{
+				Type: "counter", Description: tt.description,
+				New: func(ActorKey) *counter {
+					t.Error("Register invoked New")
+					return &counter{}
+				},
+			})
+			if tt.invalid {
+				if r != nil || !errors.Is(err, actorx.ErrSetup) {
+					t.Fatalf("Register = %v, %v; want nil, ErrSetup", r, err)
+				}
+				if len(rt.registrations) != 0 || len(rt.specs) != 0 || len(rt.factories) != 0 {
+					t.Fatal("invalid description installed a registration")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if r.spec.description != tt.description || rt.specs["counter"].description != tt.description {
+				t.Fatal("description was not saved exactly")
+			}
+		})
+	}
+}
+
+func TestRegistrationDescriptionSnapshotAndReplacement(t *testing.T) {
+	rt, peer := testRuntime(t), testRuntime(t)
+	ctx := testContext(t)
+	spec := ActorSpec[*counter]{
+		Type: "counter", Description: "original",
+		New: func(ActorKey) *counter { return &counter{} },
+	}
+	original, err := rt.Register(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Description = "replacement"
+	if original.spec.description != "original" || rt.specs[spec.Type].description != "original" {
+		t.Fatal("changing the caller's spec changed the registration")
+	}
+	other, err := peer.Register(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := original.Unregister(ctx); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := rt.Register(ctx, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []*Registration{other, replacement} {
+		if r.spec.description != "replacement" {
+			t.Fatal("new registration did not save the changed description")
+		}
+		if r.spec.contract.fingerprint != original.spec.contract.fingerprint ||
+			string(r.spec.contract.data) != string(original.spec.contract.data) {
+			t.Fatal("description changed the immutable contract")
+		}
+	}
+}
 
 func TestRegistrationWithdrawalIsolationAndReplacement(t *testing.T) {
 	rt := testRuntime(t, WithExecutionLimits(ExecutionLimits{Types: 2}))

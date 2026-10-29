@@ -18,7 +18,7 @@ registration, err := rt.Register(ctx, CounterSpec)
 err = registration.Unregister(cleanupCtx)
 ```
 
-Runtime 持有注册表、容量、Factory 和关闭清理责任，因此注册入口为 `rt.Register(ctx, spec)`。返回的 Registration 标识该次注册，独立撤销通过句柄完成，旧句柄不能影响同名的新注册。`ActorSpec[T]` 保留具体 Actor 类型，Register 使用 Go 1.27 的泛型方法。
+Runtime 持有注册表、容量、Factory 和关闭清理责任，因此注册入口为 `rt.Register(ctx, spec)`。返回的 Registration 标识该次注册，独立撤销通过句柄完成，旧句柄不能影响同名的新注册。`ActorSpec[T]` 保留具体 Actor 类型，Register 使用 Go 1.27 的泛型方法。其中 Description 为可选说明，要求合法 UTF-8、最多 512 字节，不影响契约。
 
 NewRuntime 只初始化执行、连接和 Registry；Register 校验 ActorSpec、发布不可变契约、安装 Factory 及控制/激活订阅，Flush 完成后返回成功，不创建业务实例。完整 Type 集合可以在启动前确定，仍逐项调用 Register。注册采用默认五秒、显式最多六十秒的总期限；Runtime.Close 也会取消正在安装的注册。
 

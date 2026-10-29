@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/go-aie/actorx"
 	"github.com/go-aie/actorx-dist/internal/identity"
@@ -15,6 +16,7 @@ import (
 
 type registration struct {
 	name         string
+	description  string
 	contract     wireContract
 	descriptions []actorx.CallDescriptor
 	messages     map[string]actorx.CallDescriptor
@@ -41,6 +43,9 @@ func describeActor[T actorx.Actor](spec ActorSpec[T]) (out registration, err err
 	if err = identity.Validate(spec.Type, "metadata"); err != nil {
 		return out, err
 	}
+	if !utf8.ValidString(spec.Description) || len(spec.Description) > 512 {
+		return out, fmt.Errorf("%w: Description must be valid UTF-8 and at most 512 bytes", actorx.ErrSetup)
+	}
 
 	var zero T
 	descriptions, err := actorx.Describe(zero.Bindings())
@@ -56,6 +61,7 @@ func describeActor[T actorx.Actor](spec ActorSpec[T]) (out registration, err err
 	}
 	out = registration{
 		name:         spec.Type,
+		description:  spec.Description,
 		descriptions: descriptions,
 		contract:     contract,
 		messages:     map[string]actorx.CallDescriptor{},
