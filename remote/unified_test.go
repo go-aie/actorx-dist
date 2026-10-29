@@ -164,7 +164,7 @@ func TestUnsupportedOperationEvidenceAndOtherOperation(t *testing.T) {
 				if stream {
 					again := startCall(g, testCtx(t), fixed)
 					event = await(t, r.Events())
-					if event.Method != protocol.InvokeMethod {
+					if event.Method != protocol.Call {
 						t.Fatal(event.Method)
 					}
 					if err := g.Accept(testCtx(t), r.Info().SessionToken, success(event, fixed, json.RawMessage("null"))); err != nil {
@@ -183,7 +183,7 @@ func TestUnsupportedOperationEvidenceAndOtherOperation(t *testing.T) {
 						again <- err
 					}()
 					event = await(t, r.Events())
-					if event.Method != protocol.InvokeStreamMethod {
+					if event.Method != protocol.Stream {
 						t.Fatal(event.Method)
 					}
 					if err := g.Accept(testCtx(t), r.Info().SessionToken, protocol.Success(event.ID, protocol.StreamResult{Address: fixed, FinalSeq: 0})); err != nil {

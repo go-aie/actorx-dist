@@ -7,13 +7,12 @@ import (
 )
 
 const (
-	Stream             = "actor/stream"
-	StreamOpen         = "actor/stream_open"
-	InvokeStreamMethod = "actor/invoke_stream"
-	ChunkMethod        = "actor/chunk"
-	Credit             = "actor/credit"
-	Cancel             = "actor/cancel"
-	MaxSequence        = uint64(1<<53 - 1)
+	Stream      = "actor/stream"
+	StreamOpen  = "actor/stream_open"
+	ChunkMethod = "actor/chunk"
+	Credit      = "actor/credit"
+	Cancel      = "actor/cancel"
+	MaxSequence = uint64(1<<53 - 1)
 )
 
 // Window bounds unacknowledged chunks by count and encoded JSON byte size.
@@ -64,13 +63,12 @@ type OpenParams struct {
 	Window      Window          `json:"window"`
 }
 
-// InvokeStreamParams opens a separate provider segment with independent credit.
-type InvokeStreamParams struct {
-	Address        Address         `json:"address"`
-	Input          json.RawMessage `json:"input"`
-	DeadlineUnixMS int64           `json:"deadline_unix_ms"`
-	StreamToken    string          `json:"stream_token"`
-	Window         Window          `json:"window"`
+// StreamParams adds the provider segment's preinstalled control context to the
+// common Actor operation fields. Consumer requests still use CallParams.
+type StreamParams struct {
+	CallParams
+	StreamToken string `json:"stream_token"`
+	Window      Window `json:"window"`
 }
 
 type ChunkParams struct {
@@ -116,11 +114,11 @@ func (m Message) streamParameters(direction Direction) (any, *Error) {
 	var out any
 	var err error
 	switch m.Method {
-	case InvokeStreamMethod:
+	case Stream:
 		if direction != ToProvider || m.IsNotification() {
 			return nil, wrong
 		}
-		var p InvokeStreamParams
+		var p StreamParams
 		err = decodeParams(
 			m.Params, &p,
 			[]string{"address", "input", "deadline_unix_ms", "stream_token", "window"},

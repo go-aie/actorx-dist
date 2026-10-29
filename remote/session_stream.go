@@ -76,12 +76,13 @@ func (s *session) invokeStream(
 	if !ok {
 		return actorxdist.ErrProtocol
 	}
-	m, err := protocol.NewRequest(protocol.InvokeStreamMethod, id, protocol.InvokeStreamParams{
-		Address:        a,
-		Input:          json.RawMessage(input.Content),
-		DeadlineUnixMS: deadline.UnixMilli(),
-		StreamToken:    token,
-		Window:         protocol.StreamWindow(),
+	ms := deadline.UnixMilli()
+	m, err := protocol.NewRequest(protocol.Stream, id, protocol.StreamParams{
+		CallParams: protocol.CallParams{
+			Address: a, Input: json.RawMessage(input.Content), DeadlineUnixMS: &ms,
+		},
+		StreamToken: token,
+		Window:      protocol.StreamWindow(),
 	})
 	if err != nil {
 		return actorxdist.ErrProtocol

@@ -86,7 +86,7 @@ func TestGatewayCallEvidence(t *testing.T) {
 				}
 				if mode != "create_failure" {
 					invoke := await(t, r.Events())
-					if invoke.Method != protocol.InvokeMethod {
+					if invoke.Method != protocol.Call {
 						t.Fatal(invoke)
 					}
 					switch mode {

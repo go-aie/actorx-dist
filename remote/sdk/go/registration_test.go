@@ -208,12 +208,12 @@ func TestProviderParamsIDsNotificationsAndFragmentation(t *testing.T) {
 		},
 	} {
 		id := mustJSON("bad-" + strings.Repeat("x", i))
-		b.send(wire.Message{JSONRPC: "2.0", ID: id, Method: "actor/invoke", Params: mustJSON(params)})
+		b.send(wire.Message{JSONRPC: "2.0", ID: id, Method: "actor/call", Params: mustJSON(params)})
 		assertProviderCode(t, g.response(id), -32602)
 	}
 	b.send(wire.Message{JSONRPC: "2.0", Method: "unknown"}) // notification: no reply
 	for _, id := range []json.RawMessage{mustJSON(nil), mustJSON("string-id"), []byte("900719925474099312345"), []byte("1.234567890123456789")} {
-		b.send(wire.Message{JSONRPC: "2.0", ID: id, Method: "actor/invoke", Params: mustJSON(map[string]any{
+		b.send(wire.Message{JSONRPC: "2.0", ID: id, Method: "actor/call", Params: mustJSON(map[string]any{
 			"address": selected, "input": nil, "deadline_unix_ms": time.Now().Add(5 * time.Second).UnixMilli(),
 		})})
 		if providerValue(t, g.response(id)) != nil {
@@ -265,7 +265,7 @@ func TestProviderSessionFailuresCloseWholeRuntime(t *testing.T) {
 				if mode == "transport" {
 					want = ErrTransport
 				}
-				id := g.send("actor/invoke", selected, nil, time.Now().Add(5*time.Second))
+				id := g.send("actor/call", selected, nil, time.Now().Add(5*time.Second))
 				g.response(id)
 			case "oversize":
 				g.stream(selected.Type).chunks <- []byte("data: " + strings.Repeat("x", 8193))
@@ -293,7 +293,7 @@ func TestProviderLateHandoffDoesNotRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.create(selected)
-	id := g.send("actor/invoke", selected, "one", time.Now().Add(5*time.Second))
+	id := g.send("actor/call", selected, "one", time.Now().Add(5*time.Second))
 	if providerValue(t, g.response(id)) != "one" {
 		t.Fatal("missing response")
 	}

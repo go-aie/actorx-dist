@@ -9,7 +9,7 @@ Remote 在 actorx-dist 之上提供跨语言接入。[协议文档](protocol.zh.
 ```text
 consumer SDK → HTTP Call/Stream → Gateway → actorx-dist ProxyActor
                                               ↓
-provider 对象 ← provider SDK ← 注册 SSE create/invoke/invoke_stream
+provider 对象 ← provider SDK ← 注册 SSE create/call/stream
                        ↓
                 HTTP 结果/分片 POST → Gateway → consumer 结果/分片
 ```
@@ -24,7 +24,7 @@ provider 对象 ← provider SDK ← 注册 SSE create/invoke/invoke_stream
 
 gateway 借用已有的一个 `*actorxdist.Runtime`，外部程序无需 NATS 客户端或监听端口。HTTP/SSE 是接入适配，不是新增的 actorx Channel 实现。SDK Runtime 管理外部连接及 Python 对象，actorxdist.Runtime 管理代理归属；SDK 不 claim 归属，也不生成 actorx-dist generation。
 
-Provider 通过 SDK 注册 Actor 并建立注册 SSE，在校验注册结果后返回，此时尚未创建业务对象。`addr(type, id)` 只创建本地句柄。首次 Call 或 Stream 由 actorx-dist 查找或激活 ProxyActor；代理在 `Started` 中取得完整 Self 地址并等待 `actor/create` 成功，之后才能执行 `actor/invoke` 或 `actor/invoke_stream`。已有就绪代理则省略创建。
+Provider 通过 SDK 注册 Actor 并建立注册 SSE，在校验注册结果后返回，此时尚未创建业务对象。`addr(type, id)` 只创建本地句柄。首次 Call 或 Stream 由 actorx-dist 查找或激活 ProxyActor；代理在 `Started` 中取得完整 Self 地址并等待 `actor/create` 成功，之后才能执行 `actor/call` 或 `actor/stream`。已有就绪代理则省略创建。
 
 SDK 按本次注册和完整地址（Type/ID/generation）保存对象。同一身份的重复 create 复用对象，并响应新的 RPC ID；不同 ID 或代次使用独立对象。注册时不创建对象；Python SDK 在需要实例时才调用注册时传入的类或创建函数，`factory` 参数约束见 [SDK 指南](../sdk/python/README.zh.md#api-与类型)。首次 create 要求真实对象至少有一个可调用的 `handle` / `handle_stream`，否则返回创建失败 1000。
 
@@ -112,6 +112,8 @@ Python `Runtime.close()` 关闭连接、取消并汇合 SDK 自有任务，然�
 独立进程示例证明本机源码链路，不代表已验证公开发行包、跨平台或生产恢复保证。
 
 ## 协议与 Type 迁移
+
+两段均使用 `actor/call`、`actor/stream`。当前未发布 v1 开发版本内须配套升级 gateway 和两个 SDK。流控制名称、输入接受范围、绝对期限及内部 DTO/绑定保持不变。
 
 Actor 目录统一使用 `runtime/actors` 和结果字段 `actors`，Go 接口为 `Gateway.Actors()`；不可用错误为 `actor_unavailable`（1002）。早期开发名称已移除，目录与错误处理的调用方需同步更新；本次命名调整不改变 actorx-dist DTO 或 Type 契约。
 

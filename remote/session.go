@@ -104,7 +104,7 @@ func (s *session) settle(id string, a protocol.Address) terminal {
 	defer s.mu.Unlock()
 	evidence := s.evidenceLocked(id, a)
 	for rpcID, p := range s.pending {
-		if p.method == protocol.InvokeMethod && p.requestID == id {
+		if p.method == protocol.Call && p.requestID == id {
 			s.remove(rpcID, p)
 			p.err = context.Canceled
 			close(p.done)
@@ -159,7 +159,7 @@ func (s *session) invoke(ctx context.Context, a protocol.Address, input protocol
 	if input.Validate() != nil {
 		return protocol.Result{}, actorxdist.ErrProtocol
 	}
-	return s.exchange(ctx, protocol.InvokeMethod, a, input.RequestID, json.RawMessage(input.Content))
+	return s.exchange(ctx, protocol.Call, a, input.RequestID, json.RawMessage(input.Content))
 }
 
 func (s *session) exchange(ctx context.Context, method string, a protocol.Address, requestID string, input json.RawMessage) (protocol.Result, error) {
@@ -174,8 +174,9 @@ func (s *session) exchange(ctx context.Context, method string, a protocol.Addres
 		return protocol.Result{}, actorxdist.ErrProtocol
 	}
 	var params any = protocol.CreateParams{Address: a, DeadlineUnixMS: deadline.UnixMilli()}
-	if method == protocol.InvokeMethod {
-		params = protocol.InvokeParams{Address: a, Input: input, DeadlineUnixMS: deadline.UnixMilli()}
+	if method == protocol.Call {
+		ms := deadline.UnixMilli()
+		params = protocol.CallParams{Address: a, Input: input, DeadlineUnixMS: &ms}
 	}
 	id, err := opaque()
 	if err != nil {
@@ -353,7 +354,7 @@ func (s *session) accept(response protocol.Message) error {
 			}
 			return ErrResponse
 		}
-		if p.method == protocol.InvokeMethod {
+		if p.method == protocol.Call {
 			result = protocol.NewResult(value, nil)
 		}
 	}

@@ -84,13 +84,15 @@ SDK 从成功结果、有效错误地址或 Stream 首项保存 generation；后
 | `runtime/actors` | 请求 | 空对象，可省略 | actors：type/description/protocol 数组 |
 | `actor/call` | 请求 | address、input；可选 deadline_unix_ms | 固定 address、value |
 | `actor/create` | 请求 | 固定 address、deadline_unix_ms | 相同 address |
-| `actor/invoke` | 请求 | 固定 address、input、deadline_unix_ms | 相同 address、value |
-| `actor/stream` | 请求 | 与 actor/call 相同 | 固定 address、final_seq |
+| `actor/stream` | 请求 | Call 共同字段；provider 请求另须 stream_token、window | 固定 address、final_seq |
 | `actor/stream_open` | 通知 | request_id、stream_token、window | 无 |
-| `actor/invoke_stream` | 请求 | 固定 address、input、deadline_unix_ms、stream_token、window | 相同 address、final_seq |
 | `actor/chunk` | 通知 | request_id、stream_token、固定 address、seq、value | 无 |
 | `actor/credit` | 通知 | request_id、stream_token、ack_seq | 无 |
 | `actor/cancel` | 通知 | request_id、stream_token | 无 |
+
+两段均使用 `actor/call`、`actor/stream`。共同业务字段为 `address`、`input`、`deadline_unix_ms`；Call 成功结果包含固定 `address` 和 `value`。Gateway 按需选择 generation，使用独立请求 ID 转交固定地址和既定绝对期限。Provider 执行前仍要求 generation 和显式期限，Stream 另须预置 `stream_token`、`window`；consumer 请求仍拒绝这两个控制字段，允许省略 generation 和期限。本次名称合并不扩大输入接受范围，也不改变执行约束。
+
+这是当前未发布的 `actorx.remote/v1` 开发版本内的不兼容调整，gateway 和 SDK 须配套升级。流控制名仍为 `actor/stream_open`、`actor/chunk`、`actor/credit`、`actor/cancel`。
 
 注册建立 provider 会话，不创建 Actor 实例，也不验证实例创建能否成功。Actor 目录列出当前注册，不枚举运行中的实例，也不保证后续可用性；其中 protocol 仅表示通信协议，不承诺对象支持哪些业务方法。v1 注册 params/result 和 Actor 条目均无 `capabilities`；旧注册参数即使为 false、null 或空对象也被拒绝，SDK 同样拒绝含该字段的注册结果。
 
@@ -147,7 +149,7 @@ Gateway → provider，注册 SSE 的首帧返回 protocol、Type 和会话 toke
 }
 ```
 
-连接随后保持打开，gateway 经它下发 create、invoke、invoke_stream 和流控制消息。注册成功不构造业务对象。
+连接随后保持打开，gateway 经它下发 create、call、stream 和流控制消息。注册成功不构造业务对象。
 
 ### runtime/actors：列出已注册的 Actor
 
@@ -196,9 +198,9 @@ sequenceDiagram
         P->>P: 构造并验证实例
         P->>G: 创建结果，id=g:create-1（HTTP POST）
     end
-    G-->>P: actor/invoke，id=g:invoke-1（注册 SSE）
+    G-->>P: actor/call，id=g:call-1（注册 SSE）
     P->>P: 等待 handle(message) 返回
-    P->>G: 结果，id=g:invoke-1（HTTP POST）
+    P->>G: 结果，id=g:call-1（HTTP POST）
     G-->>C: 结果，id=c:1（原 HTTP JSON 响应）
 ```
 
@@ -266,15 +268,15 @@ Provider 创建并验证真实对象，再通过 HTTP POST 回答。同一完整
 
 只有创建成功后才执行；Stream 首次激活也使用这个方法。
 
-### actor/invoke：执行 Call
+### actor/call：执行 Call
 
 Gateway → provider，经注册 SSE 下发输入、固定地址和剩余期限：
 
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:invoke-1",
-  "method": "actor/invoke",
+  "id": "g:call-1",
+  "method": "actor/call",
   "params": {
     "address": {
       "version": 1,
@@ -295,7 +297,7 @@ Provider 调用 `handle(message)`，等待一个 JSON 值，通过 HTTP POST 返
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:invoke-1",
+  "id": "g:call-1",
   "result": {
     "address": {
       "version": 1,
@@ -349,7 +351,7 @@ sequenceDiagram
         G-->>P: actor/create（注册 SSE）
         P->>G: 创建结果（HTTP POST）
     end
-    G-->>P: actor/invoke_stream，id=g:stream-1（注册 SSE）
+    G-->>P: actor/stream，id=g:stream-1（注册 SSE）
     P->>P: 迭代 handle_stream(message)
     par Provider 段
         loop 零到多个分片，受 provider 段窗口限制
@@ -423,7 +425,7 @@ Gateway → consumer，原请求的 SSE 首条通知，给出 consumer 段 token
 
 它不含地址，不表示激活或执行已成功；首次选代可能仍在进行。
 
-### actor/invoke_stream：执行 Stream
+### actor/stream：执行 Stream
 
 Gateway → provider，经注册 SSE 下发另一个 RPC ID、provider 段 token、完整地址和期限：
 
@@ -431,7 +433,7 @@ Gateway → provider，经注册 SSE 下发另一个 RPC ID、provider 段 token
 {
   "jsonrpc": "2.0",
   "id": "g:stream-1",
-  "method": "actor/invoke_stream",
+  "method": "actor/stream",
   "params": {
     "address": {
       "version": 1,
@@ -452,7 +454,7 @@ Gateway → provider，经注册 SSE 下发另一个 RPC ID、provider 段 token
 }
 ```
 
-Provider 调用 `handle_stream(message)` 并迭代输出。多个实例的 create、invoke、invoke_stream 和控制消息可在同一注册 SSE 上交错。
+Provider 调用 `handle_stream(message)` 并迭代输出。多个实例的 create、call、stream 和控制消息可在同一注册 SSE 上交错。
 
 ### actor/chunk：发送分片
 
@@ -501,7 +503,7 @@ Gateway → provider 的 credit 使用 provider 段 ID/token，经注册 SSE 下
 
 ### 最终响应：结束 Stream
 
-迭代正常结束后，provider 通过带会话 Header 的 POST 回答 `actor/invoke_stream`；终态是响应，没有 method：
+迭代正常结束后，provider 通过带会话 Header 的 POST 回答 `actor/stream`；终态是响应，没有 method：
 
 ```json
 {

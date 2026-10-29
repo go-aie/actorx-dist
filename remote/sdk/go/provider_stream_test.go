@@ -40,7 +40,7 @@ func (g *providerGateway) sendStream(a Address, input any, deadline time.Time) j
 	g.stream(a.Type).send(wire.Message{
 		JSONRPC: "2.0",
 		ID:      id,
-		Method:  "actor/invoke_stream",
+		Method:  "actor/stream",
 		Params: mustJSON(map[string]any{
 			"address":          a,
 			"input":            input,
@@ -106,7 +106,7 @@ func registerStream(t *testing.T, r *Runtime, g *providerGateway, actor any) {
 func TestProviderStreamSharesCallStateAndRetainsCredits(t *testing.T) {
 	r, g := newProviderGateway(t)
 	registerStream(t, r, g, &dualActor{})
-	call := g.send("actor/invoke", selected, nil, time.Now().Add(time.Second))
+	call := g.send("actor/call", selected, nil, time.Now().Add(time.Second))
 	if providerValue(t, g.response(call)) != json.Number("1") {
 		t.Fatal("call state")
 	}
@@ -141,7 +141,7 @@ func TestProviderStreamSharesCallStateAndRetainsCredits(t *testing.T) {
 	if err := ledger.Write("after-return"); err == nil {
 		t.Fatal("writer survived return")
 	}
-	call = g.send("actor/invoke", selected, nil, time.Now().Add(time.Second))
+	call = g.send("actor/call", selected, nil, time.Now().Add(time.Second))
 	if providerValue(t, g.response(call)) != json.Number("3") {
 		t.Fatal("stream poisoned shared object")
 	}
@@ -296,7 +296,7 @@ func TestProviderStreamUnsupportedHasZeroSequence(t *testing.T) {
 		t.Fatal(m)
 	}
 	g.join(id, selected.Type)
-	call := g.send("actor/invoke", selected, nil, time.Now().Add(time.Second))
+	call := g.send("actor/call", selected, nil, time.Now().Add(time.Second))
 	if providerValue(t, g.response(call)) != "call" {
 		t.Fatal("fallback")
 	}
@@ -513,7 +513,7 @@ func TestProviderStreamAndCallShareExecutionOwnership(t *testing.T) {
 			}
 			var first, second json.RawMessage
 			if mode == "call-first" {
-				first = g.send("actor/invoke", selected, nil, deadline)
+				first = g.send("actor/call", selected, nil, deadline)
 			} else {
 				first = g.sendStream(selected, nil, deadline)
 			}
@@ -535,7 +535,7 @@ func TestProviderStreamAndCallShareExecutionOwnership(t *testing.T) {
 			if mode == "call-first" {
 				second = g.sendStream(selected, customJSON{}, time.Now().Add(time.Second))
 			} else {
-				second = g.send("actor/invoke", selected, nil, time.Now().Add(time.Second))
+				second = g.send("actor/call", selected, nil, time.Now().Add(time.Second))
 			}
 			g.createOtherBarrier()
 			select {
@@ -642,7 +642,7 @@ func TestProviderStreamFinishedLedgersAreBounded(t *testing.T) {
 	}
 
 	// Retained stream credits do not reserve the instance's Call lock or slot.
-	call := g.send("actor/invoke", selected, nil, time.Now().Add(time.Second))
+	call := g.send("actor/call", selected, nil, time.Now().Add(time.Second))
 	assertProviderCode(t, g.response(call), 0)
 	g.join(call, selected.Type)
 	g.credit(ids[0], 1)

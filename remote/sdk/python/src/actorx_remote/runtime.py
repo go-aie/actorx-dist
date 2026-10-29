@@ -270,8 +270,8 @@ class _Registration:
 
         if message["method"] not in (
             "actor/create",
-            "actor/invoke",
-            "actor/invoke_stream",
+            "actor/call",
+            "actor/stream",
         ):
             await self.reply(
                 message,
@@ -282,9 +282,9 @@ class _Registration:
 
         try:
             required = ["address", "deadline_unix_ms"]
-            if message["method"] in ("actor/invoke", "actor/invoke_stream"):
+            if message["method"] in ("actor/call", "actor/stream"):
                 required.append("input")
-            if message["method"] == "actor/invoke_stream":
+            if message["method"] == "actor/stream":
                 if "id" not in message:
                     raise ProtocolError("Stream request ID required")
                 required.extend(("stream_token", "window"))
@@ -309,7 +309,7 @@ class _Registration:
         # Convert the wire wall-clock deadline once; local waits use monotonic time.
         deadline = asyncio.get_running_loop().time() + (ms / 1000 - time.time())
         work = _Work(message, a, deadline)
-        if message["method"] == "actor/invoke_stream":
+        if message["method"] == "actor/stream":
             work.stream = ProviderStream(self, work)
             self.streams[rpc_id] = work.stream
         if (

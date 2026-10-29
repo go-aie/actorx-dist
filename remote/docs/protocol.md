@@ -84,13 +84,15 @@ All methods appear below. Params are required unless marked optional; a fixed ad
 | `runtime/actors` | Request | Empty object, may be omitted | actors: array of type/description/protocol |
 | `actor/call` | Request | address, input; optional deadline_unix_ms | Fixed address, value |
 | `actor/create` | Request | Fixed address, deadline_unix_ms | Same address |
-| `actor/invoke` | Request | Fixed address, input, deadline_unix_ms | Same address, value |
-| `actor/stream` | Request | Same as actor/call | Fixed address, final_seq |
+| `actor/stream` | Request | Common Call fields; provider requests also require stream_token, window | Fixed address, final_seq |
 | `actor/stream_open` | Notification | request_id, stream_token, window | None |
-| `actor/invoke_stream` | Request | Fixed address, input, deadline_unix_ms, stream_token, window | Same address, final_seq |
 | `actor/chunk` | Notification | request_id, stream_token, fixed address, seq, value | None |
 | `actor/credit` | Notification | request_id, stream_token, ack_seq | None |
 | `actor/cancel` | Notification | request_id, stream_token | None |
+
+`actor/call` and `actor/stream` use the same operation names on both segments. Their common business fields are `address`, `input` and `deadline_unix_ms`; successful Call results carry the fixed `address` and `value`. The gateway selects a generation when needed and forwards the fixed address and established absolute deadline using an independent request ID. Provider dispatch requires generation and an explicit deadline; Stream also requires a preinstalled `stream_token` and `window`. Consumer requests still reject those control fields and may omit generation/deadline. This naming change does not expand accepted inputs or change execution constraints.
+
+This is an incompatible update within the current unpublished `actorx.remote/v1` development version: gateway and SDKs must be upgraded together. Stream controls retain `actor/stream_open`, `actor/chunk`, `actor/credit` and `actor/cancel`.
 
 Registration establishes the provider session without creating an Actor instance or verifying that instance creation will succeed. The Actor directory lists current registrations, not running instances, and does not promise later availability. Its protocol identifies communication rules, without promising business method support. v1 registration params/results and Actor entries have no `capabilities`. Removed registration params are rejected even when false, null or empty; the SDK also rejects registration results containing that field.
 
@@ -147,7 +149,7 @@ Gateway → provider, the first registration SSE frame returns protocol, Type an
 }
 ```
 
-The connection stays open for create, invoke, invoke_stream and stream control. Successful registration does not construct a business object.
+The connection stays open for create, call, stream and stream control. Successful registration does not construct a business object.
 
 ### runtime/actors: list registered Actors
 
@@ -196,9 +198,9 @@ sequenceDiagram
         P->>P: Construct and validate instance
         P->>G: Create result, id=g:create-1 (HTTP POST)
     end
-    G-->>P: actor/invoke, id=g:invoke-1 (registration SSE)
+    G-->>P: actor/call, id=g:call-1 (registration SSE)
     P->>P: Await handle(message)
-    P->>G: Result, id=g:invoke-1 (HTTP POST)
+    P->>G: Result, id=g:call-1 (HTTP POST)
     G-->>C: Result, id=c:1 (original HTTP JSON response)
 ```
 
@@ -266,15 +268,15 @@ The provider constructs and validates the actual object, then answers by HTTP PO
 
 Execution starts only after creation succeeds. First Stream activation uses this method too.
 
-### actor/invoke: execute the Call
+### actor/call: execute the Call
 
 Gateway → provider, over registration SSE, with input, the fixed address and remaining deadline:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:invoke-1",
-  "method": "actor/invoke",
+  "id": "g:call-1",
+  "method": "actor/call",
   "params": {
     "address": {
       "version": 1,
@@ -295,7 +297,7 @@ The provider calls `handle(message)`, awaits one JSON value and returns it by HT
 ```json
 {
   "jsonrpc": "2.0",
-  "id": "g:invoke-1",
+  "id": "g:call-1",
   "result": {
     "address": {
       "version": 1,
@@ -349,7 +351,7 @@ sequenceDiagram
         G-->>P: actor/create (registration SSE)
         P->>G: Create result (HTTP POST)
     end
-    G-->>P: actor/invoke_stream, id=g:stream-1 (registration SSE)
+    G-->>P: actor/stream, id=g:stream-1 (registration SSE)
     P->>P: Iterate handle_stream(message)
     par Provider segment
         loop Zero or more chunks, within the provider window
@@ -423,7 +425,7 @@ Gateway → consumer, the first notification on the request SSE, supplying its c
 
 It contains no address and proves neither activation nor execution success; initial generation selection may still be pending.
 
-### actor/invoke_stream: execute the Stream
+### actor/stream: execute the Stream
 
 Gateway → provider, over registration SSE, using a separate RPC ID and provider token, complete address and deadline:
 
@@ -431,7 +433,7 @@ Gateway → provider, over registration SSE, using a separate RPC ID and provide
 {
   "jsonrpc": "2.0",
   "id": "g:stream-1",
-  "method": "actor/invoke_stream",
+  "method": "actor/stream",
   "params": {
     "address": {
       "version": 1,
@@ -501,7 +503,7 @@ Gateway → provider credit uses the provider ID/token over registration SSE. Ac
 
 ### Terminal response: finish the Stream
 
-When iteration ends normally, the provider answers `actor/invoke_stream` by POST with the session header. A terminal is a response, with no method:
+When iteration ends normally, the provider answers `actor/stream` by POST with the session header. A terminal is a response, with no method:
 
 ```json
 {

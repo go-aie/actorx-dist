@@ -28,7 +28,28 @@ func TestV1WireVectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	request := func(method, id string, params any) Message {
+		t.Helper()
+		m, err := NewRequest(method, id, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	logical := a
+	logical.Generation = ""
+	ms := int64(1890000000000)
+	consumer := CallParams{Address: logical, Input: json.RawMessage(`{"text":"ping"}`)}
+	provider := CallParams{Address: a, Input: consumer.Input, DeadlineUnixMS: &ms}
 	values := map[string]any{
+		"consumer_call":   request(Call, "c:call-1", consumer),
+		"provider_call":   request(Call, "g:call-1", provider),
+		"consumer_stream": request(Stream, "c:stream-1", consumer),
+		"provider_stream": request(Stream, "g:stream-1", StreamParams{
+			CallParams:  provider,
+			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			Window:      StreamWindow(),
+		}),
 		"register": registration,
 		"registered": Success(json.RawMessage(`"p:register-1"`), RegistrationInfo{
 			Protocol: Version, Type: a.Type, SessionToken: "session-token",

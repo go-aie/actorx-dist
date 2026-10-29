@@ -68,14 +68,14 @@ func (p *registration) dispatch(m wire.Message) error {
 		p.seen[key] = struct{}{}
 	}
 
-	if m.Method != "actor/create" && m.Method != "actor/invoke" && m.Method != "actor/invoke_stream" {
+	if m.Method != "actor/create" && m.Method != "actor/call" && m.Method != "actor/stream" {
 		return p.enqueue(providerFailure(m.ID, -32601, nil), time.Now().Add(callTimeout))
 	}
 	required := []string{"address", "deadline_unix_ms"}
-	if m.Method == "actor/invoke" || m.Method == "actor/invoke_stream" {
+	if m.Method == "actor/call" || m.Method == "actor/stream" {
 		required = append(required, "input")
 	}
-	if m.Method == "actor/invoke_stream" {
+	if m.Method == "actor/stream" {
 		required = append(required, "stream_token", "window")
 	}
 	f, err := wire.Fields(m.Params, required, required...)
@@ -87,7 +87,7 @@ func (p *registration) dispatch(m wire.Message) error {
 	if err != nil || a.Type != p.actorType || string(f["deadline_unix_ms"]) == "null" || json.Unmarshal(f["deadline_unix_ms"], &ms) != nil {
 		return p.enqueue(providerFailure(m.ID, -32602, nil), time.Now().Add(callTimeout))
 	}
-	if m.Method == "actor/invoke_stream" {
+	if m.Method == "actor/stream" {
 		if m.ID == nil {
 			return protocolError()
 		}
@@ -98,7 +98,7 @@ func (p *registration) dispatch(m wire.Message) error {
 	address := Address(a)
 	reject := func(code int, a *Address) wire.Message {
 		out := providerFailure(m.ID, code, a)
-		if m.Method == "actor/invoke_stream" {
+		if m.Method == "actor/stream" {
 			out = streamFailure(out, 0)
 		}
 		return out
@@ -115,7 +115,7 @@ func (p *registration) dispatch(m wire.Message) error {
 	// starting a job. The SSE reader never waits for user code or a reply POST.
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if len(p.active) >= providerCapacity || (m.Method == "actor/invoke_stream" && len(p.streams) >= providerCapacity) {
+	if len(p.active) >= providerCapacity || (m.Method == "actor/stream" && len(p.streams) >= providerCapacity) {
 		return p.enqueue(reject(1001, &address), deadline)
 	}
 	instance := p.instances[address]
@@ -140,7 +140,7 @@ func (p *registration) dispatch(m wire.Message) error {
 		done:     make(chan struct{}),
 		settled:  make(chan struct{}),
 	}
-	if m.Method == "actor/invoke_stream" {
+	if m.Method == "actor/stream" {
 		token, _ := wire.Token(f["stream_token"])
 		w.stream = newProviderStream(p, w, token)
 		key, _ := wire.IDKey(m.ID)

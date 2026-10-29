@@ -49,7 +49,7 @@ func TestProviderTimeoutRetainsLockAndAllEightSlots(t *testing.T) {
 	other.ID = "other"
 	g.create(other)
 
-	first := g.send("actor/invoke", selected, "hold", time.Now().Add(100*time.Millisecond))
+	first := g.send("actor/call", selected, "hold", time.Now().Add(100*time.Millisecond))
 	if waitValue(t, entered) != "hold" {
 		t.Fatal("handler did not start")
 	}
@@ -71,9 +71,9 @@ func TestProviderTimeoutRetainsLockAndAllEightSlots(t *testing.T) {
 	// Seven queued jobs plus the timed-out handler consume all eight slots.
 	queued := make([]json.RawMessage, 7)
 	for i := range queued {
-		queued[i] = g.send("actor/invoke", selected, "queued", time.Now().Add(5*time.Second))
+		queued[i] = g.send("actor/call", selected, "queued", time.Now().Add(5*time.Second))
 	}
-	overflow := g.send("actor/invoke", other, "overflow", time.Now().Add(5*time.Second))
+	overflow := g.send("actor/call", other, "overflow", time.Now().Add(5*time.Second))
 	assertProviderCode(t, g.response(overflow), 1001)
 	p := g.registration(selected.Type)
 	p.mu.Lock()
@@ -131,11 +131,11 @@ func TestProviderQueuedExpiryAndIndependentInstance(t *testing.T) {
 	other := selected
 	other.ID = "other"
 	g.create(other)
-	first := g.send("actor/invoke", selected, "hold", time.Now().Add(5*time.Second))
+	first := g.send("actor/call", selected, "hold", time.Now().Add(5*time.Second))
 	waitValue(t, entered)
-	expired := g.send("actor/invoke", selected, "expired", time.Now().Add(100*time.Millisecond))
+	expired := g.send("actor/call", selected, "expired", time.Now().Add(100*time.Millisecond))
 	// A response from another instance is also a barrier for SSE admission.
-	barrier := g.send("actor/invoke", other, "other", time.Now().Add(5*time.Second))
+	barrier := g.send("actor/call", other, "other", time.Now().Add(5*time.Second))
 	if providerValue(t, g.response(barrier)) != "other" || waitValue(t, entered) != "other" {
 		t.Fatal("other instance blocked")
 	}
@@ -155,7 +155,7 @@ func TestProviderQueuedExpiryAndIndependentInstance(t *testing.T) {
 	a := selected
 	a.ID = "expired-create"
 	g.send("actor/create", a, nil, time.Now().Add(-time.Second))
-	barrier = g.send("actor/invoke", other, "barrier", time.Now().Add(5*time.Second))
+	barrier = g.send("actor/call", other, "barrier", time.Now().Add(5*time.Second))
 	g.response(barrier)
 	waitValue(t, entered)
 	g.join(barrier, selected.Type)
@@ -201,10 +201,10 @@ func TestProviderCloseWaitCancellationKeepsCleanupResponsibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.create(selected)
-	id := g.send("actor/invoke", selected, nil, time.Now().Add(5*time.Second))
+	id := g.send("actor/call", selected, nil, time.Now().Add(5*time.Second))
 	waitValue(t, entered)
 	w := g.work(id, selected.Type)
-	queued := g.send("actor/invoke", selected, nil, time.Now().Add(5*time.Second))
+	queued := g.send("actor/call", selected, nil, time.Now().Add(5*time.Second))
 
 	// Unknown method response proves the queued job was admitted first.
 	g.stream(selected.Type).send(wire.Message{JSONRPC: "2.0", ID: mustJSON("barrier"), Method: "unknown"})
@@ -334,7 +334,7 @@ func TestProviderResponsePOSTHasOriginalDeadlineAndCannotBlockSSE(t *testing.T) 
 	}
 	g.mu.Unlock()
 	deadline := time.Now().Add(100 * time.Millisecond)
-	id := g.send("actor/invoke", selected, "success", deadline)
+	id := g.send("actor/call", selected, "success", deadline)
 	if waitValue(t, posted).UnixMilli() != deadline.UnixMilli() {
 		t.Fatal("POST renewed deadline")
 	}

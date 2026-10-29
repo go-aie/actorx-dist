@@ -28,11 +28,10 @@ const (
 	MaxBatchItems   = 8
 	Capacity        = 8
 
-	Register     = "runtime/register"
-	Actors       = "runtime/actors"
-	Call         = "actor/call"
-	Create       = "actor/create"
-	InvokeMethod = "actor/invoke"
+	Register = "runtime/register"
+	Actors   = "runtime/actors"
+	Call     = "actor/call"
+	Create   = "actor/create"
 
 	// Standard JSON-RPC errors describe envelope, method and parameter failures.
 	ParseError     = -32700
@@ -187,6 +186,8 @@ type ActorsResult struct {
 	Actors []Actor `json:"actors"`
 }
 
+// CallParams defines the common business fields of actor/call and actor/stream.
+// Provider dispatch still requires a fixed address and an explicit deadline.
 type CallParams struct {
 	Address Address         `json:"address"`
 	Input   json.RawMessage `json:"input"`
@@ -198,12 +199,6 @@ type CallParams struct {
 type CreateParams struct {
 	Address        Address `json:"address"`
 	DeadlineUnixMS int64   `json:"deadline_unix_ms"`
-}
-
-type InvokeParams struct {
-	Address        Address         `json:"address"`
-	Input          json.RawMessage `json:"input"`
-	DeadlineUnixMS int64           `json:"deadline_unix_ms"`
 }
 
 type CreateResult struct {

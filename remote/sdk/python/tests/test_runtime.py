@@ -386,7 +386,7 @@ class SDKTests(unittest.IsolatedAsyncioTestCase):
             {"address": ADDRESS},
             {"address": ADDRESS, "input": None, "deadline_unix_ms": 1, "extra": True},
         ):
-            self.gateway.stream.send(p.request("actor/invoke", str(params), params))
+            self.gateway.stream.send(p.request("actor/call", str(params), params))
             self.assertEqual((await self.gateway.response())["error"]["code"], -32602)
 
         # A missing ID suppresses replies; explicit null still receives one.

@@ -264,7 +264,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
             def invoke(rpc_id, value):
                 gateway.stream.send(
                     p.request(
-                        "actor/invoke_stream",
+                        "actor/stream",
                         rpc_id,
                         {
                             "address": ADDRESS,
@@ -335,7 +335,7 @@ class ProviderCancellationTests(unittest.IsolatedAsyncioTestCase):
 
         # Dispatch and cancel without yielding to the newly scheduled worker.
         message = p.request(
-            "actor/invoke_stream",
+            "actor/stream",
             "pending",
             {
                 "address": ADDRESS,
@@ -394,7 +394,7 @@ class ProviderCancellationTests(unittest.IsolatedAsyncioTestCase):
 
         def invoke(rpc_id, value, ms):
             return p.request(
-                "actor/invoke_stream",
+                "actor/stream",
                 rpc_id,
                 {
                     "address": ADDRESS,

@@ -23,12 +23,26 @@ func streamRequest(t *testing.T, s *session, write func(protocol.Chunk) error) (
 	t.Helper()
 	s.track("stream")
 	done := make(chan error, 1)
-	go func() { done <- s.invokeStream(testCtx(t), testAddress("one"), streamInput("stream"), write) }()
-	return await(t, s.events), done
+	ctx := testCtx(t)
+	go func() { done <- s.invokeStream(ctx, testAddress("one"), streamInput("stream"), write) }()
+	m := await(t, s.events)
+	if m.Method != protocol.Stream || string(m.ID) == `"stream"` {
+		t.Fatal("invalid provider stream method or correlation", m)
+	}
+	params, e := m.Parameters(protocol.ToProvider)
+	if e != nil {
+		t.Fatal(e)
+	}
+	p := params.(protocol.StreamParams)
+	deadline, _ := ctx.Deadline()
+	if p.Address != testAddress("one") || p.DeadlineUnixMS == nil || *p.DeadlineUnixMS != deadline.UnixMilli() {
+		t.Fatal("provider stream changed address or deadline", p)
+	}
+	return m, done
 }
 
 func providerChunkMessage(m protocol.Message, seq uint64) protocol.Message {
-	var p protocol.InvokeStreamParams
+	var p protocol.StreamParams
 	_ = json.Unmarshal(m.Params, &p)
 	return protocol.Notification(protocol.ChunkMethod, protocol.ChunkParams{
 		RequestID:   m.ID,

@@ -9,7 +9,7 @@ Remote supplies cross-language access on top of actorxdist. The [protocol guide]
 ```text
 consumer SDK → HTTP Call/Stream → Gateway → actorx-dist ProxyActor
                                               ↓
-provider object ← provider SDK ← registration SSE create/invoke/invoke_stream
+provider object ← provider SDK ← registration SSE create/call/stream
                        ↓
                 HTTP result/chunk POST → Gateway → consumer result/chunks
 ```
@@ -24,7 +24,7 @@ provider object ← provider SDK ← registration SSE create/invoke/invoke_strea
 
 The gateway borrows one existing `*actorxdist.Runtime`. External programs do not need a NATS client or listener. HTTP/SSE is an access adapter, not another actorx Channel implementation. The SDK Runtime manages external connections and business objects; actorxdist.Runtime manages proxy ownership. The SDK never claims ownership or generates actorx-dist generations.
 
-The provider registers an Actor through the SDK and opens a registration SSE stream. The SDK's registration call returns after validating the result, before any business object is created. `addr(type, id)` only creates a local handle. Its first Call or Stream asks actorx-dist to find or activate a ProxyActor. During `Started`, the proxy obtains its complete Self address and waits for `actor/create` to succeed. Only then can `actor/invoke` or `actor/invoke_stream` run. An existing ready proxy skips creation.
+The provider registers an Actor through the SDK and opens a registration SSE stream. The SDK's registration call returns after validating the result, before any business object is created. `addr(type, id)` only creates a local handle. Its first Call or Stream asks actorx-dist to find or activate a ProxyActor. During `Started`, the proxy obtains its complete Self address and waits for `actor/create` to succeed. Only then can `actor/call` or `actor/stream` run. An existing ready proxy skips creation.
 
 The SDK keeps objects per registration and complete address (Type/ID/generation). Repeated create for that identity reuses the object and responds to the new RPC ID; different IDs or generations have separate objects. Registration does not create an object. In Python, the SDK calls the class or creation function supplied at registration only when an instance is needed; see the [SDK guide](../sdk/python/README.md#api-and-types) for the `factory` parameter contract. On the first create, the actual object must have at least one callable `handle` / `handle_stream`; otherwise creation fails with 1000.
 
@@ -112,6 +112,8 @@ Python `Runtime.close()` closes connections, cancels and joins SDK-owned tasks, 
 The independent-process example demonstrates the local source chain, not released-package, cross-platform or production-recovery guarantees.
 
 ## Protocol and Type migration
+
+Both segments use `actor/call` and `actor/stream`. Upgrade the gateway and both SDKs together within the current unpublished v1 development version. Stream control names, accepted inputs, absolute deadlines and internal DTOs/bindings remain unchanged.
 
 The Actor directory uses `runtime/actors` and the result field `actors`; the Go API is `Gateway.Actors()`. The unavailable error is `actor_unavailable` (1002). Earlier development names have been removed, so directory callers and error handling must be updated together. This naming change does not alter actorx-dist DTOs or Type contracts.
 

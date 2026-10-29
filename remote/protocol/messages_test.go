@@ -71,7 +71,7 @@ func TestActorMethodVectors(t *testing.T) {
 			ToProvider,
 		},
 		{
-			`{"jsonrpc":"2.0","id":"g:invoke-1","method":"actor/invoke","params":{"address":` + fixedAddress + `,"input":null,"deadline_unix_ms":1890000000000}}`,
+			`{"jsonrpc":"2.0","id":"g:invoke-1","method":"actor/call","params":{"address":` + fixedAddress + `,"input":null,"deadline_unix_ms":1890000000000}}`,
 			ToProvider,
 		},
 	}
@@ -84,7 +84,7 @@ func TestActorMethodVectors(t *testing.T) {
 		if e != nil {
 			t.Fatalf("%s: %v", tt.raw, e)
 		}
-		if c, ok := p.(CallParams); ok && string(c.Input) != `{"n":900719925474099312345}` {
+		if c, ok := p.(CallParams); ok && tt.direction == ToGateway && string(c.Input) != `{"n":900719925474099312345}` {
 			t.Fatalf("precision lost: %s", c.Input)
 		}
 	}
@@ -113,7 +113,8 @@ func TestActorMethodVectors(t *testing.T) {
 			ToProvider,
 			InvalidParams,
 		},
-		{InvokeMethod, `{"address":` + fixedAddress + `,"input":null}`, ToProvider, InvalidParams},
+		{Call, `{"address":` + fixedAddress + `,"input":null}`, ToProvider, InvalidParams},
+		{Call, `{"address":{"version":1,"type":"demo.ping","id":"x"},"input":null,"deadline_unix_ms":1}`, ToProvider, InvalidParams},
 		{Create, `{}`, ToGateway, MethodNotFound}, {Actors, `{}`, ToProvider, MethodNotFound},
 		{"actor/unsupported", `{}`, ToGateway, MethodNotFound}, {"runtime.actors", `{}`, ToGateway, MethodNotFound},
 		{"runtime/services", `{}`, ToGateway, MethodNotFound},
@@ -213,11 +214,11 @@ func TestResultFailureAndProviderErrors(t *testing.T) {
 		valid       bool
 	}{
 		{Create, `{"address":` + fixedAddress + `}`, true},
-		{InvokeMethod, `{"address":` + fixedAddress + `,"value":null}`, true},
-		{InvokeMethod, `{"address":` + fixedAddress + `}`, false},
+		{Call, `{"address":` + fixedAddress + `,"value":null}`, true},
+		{Call, `{"address":` + fixedAddress + `}`, false},
 		{Create, `{"address":` + fixedAddress + `,"value":null}`, false},
 		{
-			InvokeMethod,
+			Call,
 			`{"address":` + strings.Replace(fixedAddress, "session-42", "other", 1) + `,"value":null}`,
 			false,
 		},

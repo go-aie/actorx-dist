@@ -134,7 +134,7 @@ func TestHTTPStreamNATS(t *testing.T) {
 			finish(e)
 			return
 		}
-		p := params.(protocol.InvokeStreamParams)
+		p := params.(protocol.StreamParams)
 		// The first four chunks fill the provider window. Further chunks
 		// require credit propagated from the consumer through the native stream.
 		for seq := uint64(1); seq <= 6; seq++ {

@@ -269,12 +269,12 @@ func TestHTTPNATS(t *testing.T) {
 	checkPost(encode(protocol.Success(create.ID, struct{}{})), info.SessionToken, testKey, 400)
 	checkPost(encode(created), info.SessionToken, testKey, 204)
 	checkPost(encode(created), info.SessionToken, testKey, 409)
-	invoke := next(protocol.InvokeMethod)
+	invoke := next(protocol.Call)
 	params, rpcErr = invoke.Parameters(protocol.ToProvider)
 	if rpcErr != nil {
 		t.Fatal(rpcErr)
 	}
-	ip := params.(protocol.InvokeParams)
+	ip := params.(protocol.CallParams)
 	if ip.Address != fixed || string(ip.Input) != `{"text":"ping"}` {
 		t.Fatal(ip)
 	}
@@ -292,7 +292,7 @@ func TestHTTPNATS(t *testing.T) {
 	}
 	// Fixed generation reuses the instance and returns business failure via DTO.
 	second := call(fixed, `null`)
-	invoke = next(protocol.InvokeMethod)
+	invoke = next(protocol.Call)
 	checkPost(
 		encode(protocol.ErrorResponse(invoke.ID, protocol.NewError(protocol.RemoteError, "handler failed", &fixed))),
 		info.SessionToken, testKey, 204,

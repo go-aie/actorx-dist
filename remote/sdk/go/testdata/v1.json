@@ -1,4 +1,8 @@
 {
+  "consumer_call": {"jsonrpc":"2.0","id":"c:call-1","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},"input":{"text":"ping"}}},
+  "consumer_stream": {"jsonrpc":"2.0","id":"c:stream-1","method":"actor/stream","params":{"address":{"version":1,"type":"demo.ping","id":"session-42"},"input":{"text":"ping"}}},
+  "provider_call": {"jsonrpc":"2.0","id":"g:call-1","method":"actor/call","params":{"address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"input":{"text":"ping"},"deadline_unix_ms":1890000000000}},
+  "provider_stream": {"jsonrpc":"2.0","id":"g:stream-1","method":"actor/stream","params":{"address":{"version":1,"type":"demo.ping","id":"session-42","generation":"AAAAAAAAAAAAAAAAAAAAAA"},"input":{"text":"ping"},"deadline_unix_ms":1890000000000,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","window":{"items":4,"bytes":32768}}},
   "register": {"jsonrpc":"2.0","id":"p:register-1","method":"runtime/register","params":{"type":"demo.ping","description":"Ping/Pong provider"}},
   "registered": {"jsonrpc":"2.0","id":"p:register-1","result":{"protocol":"actorx.remote/v1","type":"demo.ping","session_token":"session-token"}},
   "actors": {"jsonrpc":"2.0","id":"list-1","result":{"actors":[{"type":"demo.ping","description":"Ping/Pong provider","protocol":"actorx.remote/v1"}]}},

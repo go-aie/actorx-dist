@@ -107,19 +107,22 @@ func TestSessionCorrelationAndTerminalPublication(t *testing.T) {
 	s := r.session
 	s.track("call-1")
 	done := make(chan error, 1)
+	ctx := testCtx(t)
 	go func() {
-		_, err := s.invoke(testCtx(t), testAddress("one"), input("call-1"))
+		_, err := s.invoke(ctx, testAddress("one"), input("call-1"))
 		done <- err
 	}()
 	event := await(t, r.Events())
-	if event.Method != protocol.InvokeMethod {
+	if event.Method != protocol.Call {
 		t.Fatal(event)
 	}
 	params, e := event.Parameters(protocol.ToProvider)
 	if e != nil {
 		t.Fatal(e)
 	}
-	if params.(protocol.InvokeParams).Address != testAddress("one") {
+	p := params.(protocol.CallParams)
+	deadline, _ := ctx.Deadline()
+	if p.Address != testAddress("one") || p.DeadlineUnixMS == nil || *p.DeadlineUnixMS != deadline.UnixMilli() || string(event.ID) == `"call-1"` {
 		t.Fatal(params)
 	}
 

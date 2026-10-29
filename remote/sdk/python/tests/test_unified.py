@@ -51,7 +51,7 @@ async def dispatch(
     }
     if method != "actor/create":
         params["input"] = value
-    if method == "actor/invoke_stream":
+    if method == "actor/stream":
         params.update(stream_token=TOKEN, window=WINDOW)
     await registration.dispatch(p.request(method, rpc_id, params))
 
@@ -108,22 +108,22 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         # Interleave operations on that instance, including missing ones.
                         count = 0
                         for n, method in enumerate(
-                            ("actor/invoke", "actor/invoke_stream", "actor/invoke")
+                            ("actor/call", "actor/stream", "actor/call")
                         ):
                             m, chunks = await exchange(reg, posts, method, f"op{n}")
                             missing = (
-                                method == "actor/invoke" and mode == "stream"
-                            ) or (method == "actor/invoke_stream" and mode == "call")
+                                method == "actor/call" and mode == "stream"
+                            ) or (method == "actor/stream" and mode == "call")
                             if missing:
                                 self.assertEqual(m["error"]["code"], 1013)
                                 self.assertEqual(m["error"]["data"]["address"], ADDRESS)
                                 self.assertEqual(chunks, [])
-                                if method == "actor/invoke_stream":
+                                if method == "actor/stream":
                                     self.assertEqual(m["error"]["data"]["final_seq"], 0)
                             else:
                                 count += 1
                                 self.assertEqual(m["result"]["address"], ADDRESS)
-                                if method == "actor/invoke":
+                                if method == "actor/call":
                                     self.assertEqual(m["result"]["value"], count)
                                 else:
                                     self.assertEqual(chunks, [count])
@@ -214,11 +214,11 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
 
         async with provider(Actor) as (_, reg, posts):
             await exchange(reg, posts, "actor/create", "create")
-            m, _ = await exchange(reg, posts, "actor/invoke", "awaitable", "ok")
+            m, _ = await exchange(reg, posts, "actor/call", "awaitable", "ok")
             self.assertEqual(m["result"]["value"], "ok")
             for value in ("wrong", "error", "non-json"):
                 m, _ = await exchange(
-                    reg, posts, "actor/invoke", "call-" + value, value
+                    reg, posts, "actor/call", "call-" + value, value
                 )
                 self.assertEqual(m["error"]["code"], 1000)
             for value in (
@@ -231,7 +231,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                 "empty",
             ):
                 m, chunks = await exchange(
-                    reg, posts, "actor/invoke_stream", value, value
+                    reg, posts, "actor/stream", value, value
                 )
                 self.assertEqual(
                     chunks,
@@ -249,7 +249,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("secret", str(m))
 
     async def test_call_stream_overlap_expiry_and_cancel_retain_one_owner(self):
-        for first_method in ("actor/invoke", "actor/invoke_stream"):
+        for first_method in ("actor/call", "actor/stream"):
             with self.subTest(first=first_method):
                 entered, canceled, release = (
                     asyncio.Event(),
@@ -283,9 +283,9 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                             w for w in reg.active if w.message["id"] == "first"
                         )
                         other = (
-                            "actor/invoke"
+                            "actor/call"
                             if first_method.endswith("stream")
-                            else "actor/invoke_stream"
+                            else "actor/stream"
                         )
 
                         await dispatch(reg, other, "expired", "must-not-run", ms=50)
@@ -342,7 +342,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                             (ADDRESS["type"], ADDRESS["id"], ADDRESS["generation"])
                         ].actor.handle_stream = None
                         m, _ = await exchange(
-                            reg, posts, "actor/invoke_stream", "missing"
+                            reg, posts, "actor/stream", "missing"
                         )
                         self.assertEqual(m["error"]["code"], 1013)
                         await reg.dispatch(

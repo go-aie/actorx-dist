@@ -229,11 +229,16 @@ func (m Message) Parameters(direction Direction) (any, *Error) {
 		}
 		_, err = object(raw, nil)
 		out = struct{}{}
-	case direction == ToGateway && (m.Method == Call || m.Method == Stream):
+	case (direction == ToGateway && (m.Method == Call || m.Method == Stream)) ||
+		(direction == ToProvider && m.Method == Call):
 		var p CallParams
-		err = decodeParams(raw, &p, []string{"address", "input", "deadline_unix_ms"}, "address", "input")
+		required := []string{"address", "input"}
+		if direction == ToProvider {
+			required = append(required, "deadline_unix_ms")
+		}
+		err = decodeParams(raw, &p, []string{"address", "input", "deadline_unix_ms"}, required...)
 		if err == nil {
-			err = validateAddressField(raw, false)
+			err = validateAddressField(raw, direction == ToProvider)
 		}
 		out = p
 	case direction == ToProvider && m.Method == Create:
@@ -243,14 +248,7 @@ func (m Message) Parameters(direction Direction) (any, *Error) {
 			err = validateAddressField(raw, true)
 		}
 		out = p
-	case direction == ToProvider && m.Method == InvokeMethod:
-		var p InvokeParams
-		err = decodeParams(raw, &p, []string{"address", "input", "deadline_unix_ms"}, "address", "input", "deadline_unix_ms")
-		if err == nil {
-			err = validateAddressField(raw, true)
-		}
-		out = p
-	case m.Method == InvokeStreamMethod || m.Method == ChunkMethod || m.Method == Credit || m.Method == Cancel || m.Method == StreamOpen:
+	case m.Method == Stream || m.Method == ChunkMethod || m.Method == Credit || m.Method == Cancel || m.Method == StreamOpen:
 		return m.streamParameters(direction)
 	default:
 		return nil, NewError(MethodNotFound, "Method not found", nil)
@@ -265,7 +263,7 @@ func (m Message) Parameters(direction Direction) (any, *Error) {
 func ProviderResult(raw []byte, method string, expected Address) (json.RawMessage, error) {
 	allowed := []string{"address"}
 	required := []string{"address"}
-	if method == InvokeMethod {
+	if method == Call {
 		allowed = append(allowed, "value")
 		required = append(required, "value")
 	} else if method != Create {

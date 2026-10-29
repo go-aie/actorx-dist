@@ -154,7 +154,7 @@ func (g *providerGateway) send(method string, a Address, input any, deadline tim
 	g.serial++
 	id := mustJSON(g.serial) // numeric IDs must remain numeric in replies
 	params := map[string]any{"address": a, "deadline_unix_ms": deadline.UnixMilli()}
-	if method == "actor/invoke" {
+	if method == "actor/call" {
 		params["input"] = input
 	}
 	g.stream(a.Type).send(wire.Message{JSONRPC: "2.0", ID: id, Method: method, Params: mustJSON(params)})
@@ -277,7 +277,7 @@ func TestProviderLazyFactoryReuseAndCompleteIdentity(t *testing.T) {
 		t.Fatal("duplicate create constructed twice")
 	}
 	for n := 1; n <= 2; n++ {
-		id := g.send("actor/invoke", selected, customJSON{}, time.Now().Add(5*time.Second))
+		id := g.send("actor/call", selected, customJSON{}, time.Now().Add(5*time.Second))
 		got := providerValue(t, g.response(id)).(map[string]any)
 		if got["count"] != json.Number(strconv.Itoa(n)) || got["input"].(map[string]any)["n"] != json.Number("900719925474099312345") {
 			t.Fatal(got)
@@ -297,7 +297,7 @@ func TestProviderLazyFactoryReuseAndCompleteIdentity(t *testing.T) {
 			}
 		}
 		g.create(a)
-		id := g.send("actor/invoke", a, nil, time.Now().Add(5*time.Second))
+		id := g.send("actor/call", a, nil, time.Now().Add(5*time.Second))
 		if providerValue(t, g.response(id)).(map[string]any)["count"] != json.Number("1") {
 			t.Fatal("instance identity shared")
 		}
@@ -364,7 +364,7 @@ func TestProviderFactoryAndHandlerFailuresAreControlled(t *testing.T) {
 		}
 		g.create(selected)
 		for _, v := range []string{"error", "panic", "nan", "marshaler", "duplicate", "large", "deep"} {
-			id := g.send("actor/invoke", selected, v, time.Now().Add(5*time.Second))
+			id := g.send("actor/call", selected, v, time.Now().Add(5*time.Second))
 			m := g.response(id)
 			assertProviderCode(t, m, 1000)
 			var data struct{ Address Address }
@@ -374,7 +374,7 @@ func TestProviderFactoryAndHandlerFailuresAreControlled(t *testing.T) {
 			}
 			g.join(id, selected.Type)
 		}
-		id := g.send("actor/invoke", selected, "survived", time.Now().Add(5*time.Second))
+		id := g.send("actor/call", selected, "survived", time.Now().Add(5*time.Second))
 		if providerValue(t, g.response(id)) != "survived" {
 			t.Fatal("error poisoned instance")
 		}
@@ -385,7 +385,7 @@ func TestProviderFactoryAndHandlerFailuresAreControlled(t *testing.T) {
 			t.Fatal(err)
 		}
 		g.create(selected)
-		id := g.send("actor/invoke", selected, nil, time.Now().Add(5*time.Second))
+		id := g.send("actor/call", selected, nil, time.Now().Add(5*time.Second))
 		m := g.response(id)
 		assertProviderCode(t, m, 1013)
 		var data struct{ Address Address }

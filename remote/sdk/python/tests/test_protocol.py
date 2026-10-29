@@ -45,6 +45,21 @@ class ProtocolTests(unittest.TestCase):
             ),
         )
         self.assertEqual(p.VERSION, "actorx.remote/v1")
+        for role in ("consumer", "provider"):
+            for operation in ("call", "stream"):
+                message = vectors[f"{role}_{operation}"]
+                self.assertEqual(message["method"], f"actor/{operation}")
+                self.assertEqual(message["params"]["input"], {"text": "ping"})
+                if role == "provider":
+                    self.assertEqual(p.address(message["params"]["address"]), ADDRESS)
+                    self.assertEqual(
+                        message["params"]["deadline_unix_ms"], 1890000000000
+                    )
+                if role == "provider" and operation == "stream":
+                    self.assertEqual(message["params"]["stream_token"], "A" * 43)
+                    self.assertEqual(
+                        message["params"]["window"], {"items": 4, "bytes": 32768}
+                    )
         self.assertEqual(
             vectors["register"],
             p.request(
@@ -144,7 +159,7 @@ class ProtocolTests(unittest.TestCase):
             ),
             p.encode(
                 p.request(
-                    "actor/invoke",
+                    "actor/call",
                     "g:invoke-1",
                     {
                         "address": ADDRESS,

@@ -131,7 +131,7 @@ class Gateway:
 
     def send(
         self,
-        method: str = "actor/invoke",
+        method: str = "actor/call",
         *,
         address: Mapping[str, object] | None = None,
         value: object = None,
@@ -145,7 +145,7 @@ class Gateway:
             if ms is not None
             else int(time.time() * 1000) + 5000,
         }
-        if method == "actor/invoke":
+        if method == "actor/call":
             params["input"] = value
 
         message = p.request(
