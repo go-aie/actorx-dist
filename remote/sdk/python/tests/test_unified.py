@@ -62,7 +62,7 @@ async def exchange(registration, posts, method, rpc_id, value=None, **kw):
     chunks = []
     while True:
         m = await bounded(posts.get())
-        if m.get("method") == "actor/chunk":
+        if m.get("method") == "stream/chunk":
             chunks.append(m["params"]["value"])
         else:
             assert m["id"] == rpc_id
@@ -295,7 +295,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         if first.stream is not None:
                             await reg.dispatch(
                                 p.notification(
-                                    "actor/cancel",
+                                    "stream/cancel",
                                     {"request_id": "first", "stream_token": TOKEN},
                                 )
                             )
@@ -347,7 +347,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(m["error"]["code"], 1013)
                         await reg.dispatch(
                             p.notification(
-                                "actor/cancel",
+                                "stream/cancel",
                                 {"request_id": "missing", "stream_token": TOKEN},
                             )
                         )
@@ -366,7 +366,7 @@ class UnifiedConsumerTests(unittest.IsolatedAsyncioTestCase):
 
                     async def handle(req):
                         m = p.envelope(req.content)
-                        if m["method"] in ("actor/credit", "actor/cancel"):
+                        if m["method"] in ("stream/ack", "stream/cancel"):
                             return httpx.Response(204)
                         requests.append(m)
                         if m["method"] == missing:
@@ -387,7 +387,7 @@ class UnifiedConsumerTests(unittest.IsolatedAsyncioTestCase):
                             wire = Stream()
                             wire.send(
                                 p.notification(
-                                    "actor/stream_open",
+                                    "stream/opened",
                                     {
                                         "request_id": m["id"],
                                         "stream_token": TOKEN,
@@ -444,7 +444,7 @@ class UnifiedConsumerTests(unittest.IsolatedAsyncioTestCase):
 
                 async def handle(req):
                     m = p.envelope(req.content)
-                    if m["method"] in ("actor/credit", "actor/cancel"):
+                    if m["method"] in ("stream/ack", "stream/cancel"):
                         return httpx.Response(204)
                     result = p.failure(m["id"], 1013, actor_address=ADDRESS)
                     result["error"]["data"]["final_seq"] = 0
@@ -458,7 +458,7 @@ class UnifiedConsumerTests(unittest.IsolatedAsyncioTestCase):
                         wire = Stream()
                         wire.send(
                             p.notification(
-                                "actor/stream_open",
+                                "stream/opened",
                                 {
                                     "request_id": m["id"],
                                     "stream_token": TOKEN,
@@ -468,7 +468,7 @@ class UnifiedConsumerTests(unittest.IsolatedAsyncioTestCase):
                         )
                         wire.send(
                             p.notification(
-                                "actor/chunk",
+                                "stream/chunk",
                                 {
                                     "request_id": m["id"],
                                     "stream_token": TOKEN,

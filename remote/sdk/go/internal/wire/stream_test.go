@@ -52,7 +52,7 @@ func TestStreamSequencesTokensAndWindows(t *testing.T) {
 
 func TestStreamControlPreservesIDTypesAndExactFields(t *testing.T) {
 	for _, id := range []string{`null`, `1`, `900719925474099312345`, `"1"`, `"a\\b"`} {
-		raw := []byte(`{"jsonrpc":"2.0","method":"actor/credit","params":{"request_id":` + id + `,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":9007199254740991}}`)
+		raw := []byte(`{"jsonrpc":"2.0","method":"stream/ack","params":{"request_id":` + id + `,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":9007199254740991}}`)
 		m, err := Parse(raw)
 		if err != nil {
 			t.Fatal(err)
@@ -66,10 +66,12 @@ func TestStreamControlPreservesIDTypesAndExactFields(t *testing.T) {
 		t.Fatal("ID correlation")
 	}
 	for _, raw := range []string{
-		`{"jsonrpc":"2.0","id":null,"method":"actor/cancel","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`,
-		`{"jsonrpc":"2.0","method":"actor/cancel","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":0}}`,
-		`{"jsonrpc":"2.0","method":"actor/credit","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`,
-		`{"jsonrpc":"2.0","method":"actor/credit","params":{"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":0}}`,
+		`{"jsonrpc":"2.0","method":"actor/credit","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":0}}`,
+		`{"jsonrpc":"2.0","method":"actor/cancel","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`,
+		`{"jsonrpc":"2.0","id":null,"method":"stream/cancel","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`,
+		`{"jsonrpc":"2.0","method":"stream/cancel","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":0}}`,
+		`{"jsonrpc":"2.0","method":"stream/ack","params":{"request_id":null,"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}`,
+		`{"jsonrpc":"2.0","method":"stream/ack","params":{"stream_token":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","ack_seq":0}}`,
 	} {
 		m, err := Parse([]byte(raw))
 		if err != nil {

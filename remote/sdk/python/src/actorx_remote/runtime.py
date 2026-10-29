@@ -252,7 +252,7 @@ class _Registration:
         if "method" not in message:
             raise ProtocolError("Expected provider request")
 
-        if message["method"] in ("actor/credit", "actor/cancel"):
+        if message["method"] in ("stream/ack", "stream/cancel"):
             if "id" in message:
                 raise ProtocolError("Expected stream control notification")
             params = message.get("params", {})

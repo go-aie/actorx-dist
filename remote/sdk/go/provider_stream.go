@@ -98,7 +98,7 @@ func (p *registration) control(m wire.Message) error {
 		s.mu.Unlock()
 		return protocolError()
 	}
-	if m.Method == "actor/cancel" {
+	if m.Method == "stream/cancel" {
 		if !s.finished {
 			s.work.cancel()
 		}
@@ -171,7 +171,7 @@ func (s *providerStream) Write(value any) error {
 	if seq > wire.MaxSequence {
 		return s.failed(protocolError())
 	}
-	raw, err := wire.Notification("actor/chunk", struct {
+	raw, err := wire.Notification("stream/chunk", struct {
 		RequestID   json.RawMessage `json:"request_id"`
 		StreamToken string          `json:"stream_token"`
 		Address     Address         `json:"address"`

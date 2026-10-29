@@ -53,7 +53,7 @@ func (g *providerGateway) sendStream(a Address, input any, deadline time.Time) j
 }
 
 func (g *providerGateway) credit(id json.RawMessage, seq uint64) {
-	g.stream(selected.Type).send(streamNotification("actor/credit", map[string]any{
+	g.stream(selected.Type).send(streamNotification("stream/ack", map[string]any{
 		"request_id":   id,
 		"stream_token": testToken,
 		"ack_seq":      seq,
@@ -61,12 +61,12 @@ func (g *providerGateway) credit(id json.RawMessage, seq uint64) {
 }
 
 func (g *providerGateway) cancelStream(id json.RawMessage) {
-	g.stream(selected.Type).send(streamNotification("actor/cancel", map[string]any{"request_id": id, "stream_token": testToken}))
+	g.stream(selected.Type).send(streamNotification("stream/cancel", map[string]any{"request_id": id, "stream_token": testToken}))
 }
 
 func chunkFields(t *testing.T, m wire.Message) map[string]json.RawMessage {
 	t.Helper()
-	if m.Method != "actor/chunk" || m.ID != nil {
+	if m.Method != "stream/chunk" || m.ID != nil {
 		t.Fatal("expected chunk", m)
 	}
 	names := []string{"request_id", "stream_token", "address", "seq", "value"}
@@ -406,7 +406,7 @@ func TestProviderStreamCreditValidationAndExpiry(t *testing.T) {
 			case "request-id":
 				params["request_id"] = string(id)
 			}
-			g.stream(selected.Type).send(streamNotification("actor/credit", params))
+			g.stream(selected.Type).send(streamNotification("stream/ack", params))
 			if mode == "future" || mode == "token" {
 				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 				defer cancel()
@@ -433,7 +433,7 @@ func TestProviderStreamHandoffBeforeNextChunkAndTerminal(t *testing.T) {
 	release := make(chan struct{})
 	var posts atomic.Int32
 	g.replyHook = func(req *http.Request, m wire.Message) (*http.Response, error) {
-		if m.Method == "actor/chunk" && posts.Add(1) == 1 {
+		if m.Method == "stream/chunk" && posts.Add(1) == 1 {
 			close(held)
 			select {
 			case <-release:
@@ -576,7 +576,7 @@ func TestProviderStreamLateHandoff409AndOriginalBudget(t *testing.T) {
 			var attempts atomic.Int32
 			requestContext := make(chan context.Context, 1)
 			g.replyHook = func(req *http.Request, m wire.Message) (*http.Response, error) {
-				if m.Method == "actor/chunk" {
+				if m.Method == "stream/chunk" {
 					attempts.Add(1)
 					requestContext <- req.Context()
 					if mode == "409" {

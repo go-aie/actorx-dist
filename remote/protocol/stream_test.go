@@ -67,6 +67,29 @@ func TestStreamCannotOpenFromBatchOrNotification(t *testing.T) {
 	}
 }
 
+func TestLegacyStreamMethodsAreNotAliases(t *testing.T) {
+	token := strings.Repeat("A", 43)
+	address := Address{Version: 1, Type: "demo.chat", ID: "one", Generation: "AAAAAAAAAAAAAAAAAAAAAA"}
+	for _, tc := range []struct {
+		method string
+		params any
+	}{
+		{"actor/stream_open", OpenParams{RequestID: json.RawMessage(`"s"`), StreamToken: token, Window: StreamWindow()}},
+		{"actor/chunk", ChunkParams{RequestID: json.RawMessage(`"s"`), StreamToken: token, Address: address, Seq: 1, Value: json.RawMessage(`null`)}},
+		{"actor/credit", ControlParams{RequestID: json.RawMessage(`"s"`), StreamToken: token, AckSeq: 1}},
+		{"actor/cancel", CancelParams{RequestID: json.RawMessage(`"s"`), StreamToken: token}},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			for _, direction := range []Direction{ToGateway, ToProvider} {
+				m := Notification(tc.method, tc.params)
+				if _, e := m.Parameters(direction); e == nil || e.Code != MethodNotFound {
+					t.Fatalf("legacy method %s accepted in direction %v: %v", tc.method, direction, e)
+				}
+			}
+		})
+	}
+}
+
 func TestStreamTerminalValidation(t *testing.T) {
 	a := Address{
 		Version:    1,

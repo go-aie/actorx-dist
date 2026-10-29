@@ -50,7 +50,7 @@ GOWORK=off go test -race ./...
 | `StreamActor.HandleStream(ctx, message, writer) error` | Stream handler，逐项 `writer.Write(value)`，返回后由 SDK 提交终态 |
 | `rt.Addr(type, id)` / `addr.Address()` | 本地寻址 / 独立地址快照，generation 初始为空 |
 | `addr.Call(ctx, message)` | 五秒总预算，包含 Addr 排队及 HTTP，尊重更早 context 期限 |
-| `addr.Stream(ctx, message, opts...)` | 建立并验证 stream_open；`WithStreamTimeout(d)` 接受 `(0, 60s]`，默认五秒 |
+| `addr.Stream(ctx, message, opts...)` | 建立并验证 stream/opened；`WithStreamTimeout(d)` 接受 `(0, 60s]`，默认五秒 |
 | `stream.Next()` / `Value()` / `Err()` | 单消费者迭代，Next 为 false 后检查 Err；Value 为通用 JSON 值 |
 | `stream.Close()` | 幂等关闭，可并发中断 Next；提前 break 时必须调用 |
 | `rt.WaitClosed(ctx)` | 等待关闭或 provider 断线，保留关闭原因 |
@@ -83,7 +83,7 @@ if errors.Is(err, actorxremote.ErrUnsupportedOperation) {
 
 ## 流与关闭
 
-`Stream` 返回前校验 stream_open，建立前的 JSON RPC error 直接返回；stream_open 不固定 generation。Next 交付一项，再次 Next 才确认前项消费，处理最后一项后也需再次 Next。每段窗口独立为四项/32 KiB，排队和当前项均占额度。正常耗尽要求明确终态，EOF 不是成功；部分失败不回滚已消费内容。总期限覆盖排队、建连、执行及消费，不逐项续期。
+`Stream` 返回前校验 stream/opened，建立前的 JSON RPC error 直接返回；stream/opened 不固定 generation。Next 交付一项，再次 Next 才确认前项消费，处理最后一项后也需再次 Next。每段窗口独立为四项/32 KiB，排队和当前项均占额度。正常耗尽要求明确终态，EOF 不是成功；部分失败不回滚已消费内容。总期限覆盖排队、建连、执行及消费，不逐项续期。
 
 Next/Value/Err 由单消费者使用；Close 可与 Next 并发，负责取消未完成流并汇合 reader。总是 defer stream.Close，提前 break 也能清理。流在结束或关闭前持有 Addr 的执行所有权；同一 Addr 的其他操作需等待。
 

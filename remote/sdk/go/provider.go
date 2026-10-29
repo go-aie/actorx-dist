@@ -48,7 +48,7 @@ func (p *registration) dispatch(m wire.Message) error {
 	if p.ctx.Err() != nil {
 		return p.ctx.Err()
 	}
-	if m.Method == "actor/credit" || m.Method == "actor/cancel" {
+	if m.Method == "stream/ack" || m.Method == "stream/cancel" {
 		return p.control(m)
 	}
 

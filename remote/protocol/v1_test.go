@@ -50,6 +50,27 @@ func TestV1WireVectors(t *testing.T) {
 			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
 			Window:      StreamWindow(),
 		}),
+		"stream_opened": Notification(StreamOpen, OpenParams{
+			RequestID:   json.RawMessage(`"c:stream-1"`),
+			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			Window:      StreamWindow(),
+		}),
+		"stream_chunk": Notification(ChunkMethod, ChunkParams{
+			RequestID:   json.RawMessage(`"c:stream-1"`),
+			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			Address:     a,
+			Seq:         1,
+			Value:       json.RawMessage(`null`),
+		}),
+		"stream_ack": Notification(Credit, ControlParams{
+			RequestID:   json.RawMessage(`"c:stream-1"`),
+			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+			AckSeq:      1,
+		}),
+		"stream_cancel": Notification(Cancel, CancelParams{
+			RequestID:   json.RawMessage(`"c:stream-1"`),
+			StreamToken: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		}),
 		"register": registration,
 		"registered": Success(json.RawMessage(`"p:register-1"`), RegistrationInfo{
 			Protocol: Version, Type: a.Type, SessionToken: "session-token",

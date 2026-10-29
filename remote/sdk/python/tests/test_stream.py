@@ -21,6 +21,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         self.controls = asyncio.Queue()
         self.started = asyncio.Event()
         self.request = None
+        self.open_method = "stream/opened"
 
         async def handle(req):
             m = p.envelope(req.content)
@@ -33,7 +34,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
                 self.request = m
                 self.wire.send(
                     p.notification(
-                        "actor/stream_open",
+                        self.open_method,
                         {
                             "request_id": m["id"],
                             "stream_token": TOKEN,
@@ -66,7 +67,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
             "value": value,
         }
         params.update(changes)
-        self.wire.send(p.notification("actor/chunk", params))
+        self.wire.send(p.notification("stream/chunk", params))
 
     def final(self, seq):
         self.wire.send(
@@ -133,13 +134,37 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OutcomeUnknownError):
             await bounded(anext(stream))
 
+    async def test_legacy_open_is_not_an_alias(self):
+        self.open_method = "actor/stream_open"
+        stream = self.runtime.addr("demo.ping", "session-42").stream(None)
+        with self.assertRaises(OutcomeUnknownError):
+            async with stream:
+                await bounded(anext(stream))
+
+    async def test_legacy_chunk_is_not_an_alias(self):
+        stream = await self.open()
+        self.wire.send(
+            p.notification(
+                "actor/chunk",
+                {
+                    "request_id": self.request["id"],
+                    "stream_token": TOKEN,
+                    "address": ADDRESS,
+                    "seq": 1,
+                    "value": None,
+                },
+            )
+        )
+        with self.assertRaises(OutcomeUnknownError):
+            await bounded(anext(stream))
+
     async def test_early_exit_sends_cancel_and_runtime_joins(self):
         stream = await self.open()
         self.chunk(1, "hello")
         self.assertEqual(await bounded(anext(stream)), "hello")
         await self.runtime.close()
         cancel = await bounded(self.controls.get())
-        self.assertEqual(cancel["method"], "actor/cancel")
+        self.assertEqual(cancel["method"], "stream/cancel")
         self.assertTrue(stream.reader.done())
         self.assertTrue(self.wire.closed.is_set())
 
@@ -243,7 +268,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
                     headers={"content-type": "text/event-stream"},
                     stream=gateway.stream,
                 )
-            if m.get("method") == "actor/chunk":
+            if m.get("method") == "stream/chunk":
                 self.assertEqual(
                     req.headers["X-Actorx-Remote-Session"], "session-token"
                 )
@@ -290,21 +315,34 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
             self.assertTrue(chunks.empty())
 
-            control("actor/credit", "six", 2)
+            # Retired control names cannot release credit or cancel live work.
+            registration = runtime._registrations["demo.ping"]
+            ledger = registration.streams["six"]
+            for method, extra in (("actor/credit", {"ack_seq": 2}), ("actor/cancel", {})):
+                await registration.dispatch(
+                    p.notification(
+                        method, {"request_id": "six", "stream_token": TOKEN, **extra}
+                    )
+                )
+                self.assertEqual(ledger.ack, 0)
+                self.assertEqual(len(ledger.sizes), 4)
+                self.assertFalse(ledger.work.cancel_requested)
+
+            control("stream/ack", "six", 2)
             for i in (5, 6):
                 self.assertEqual((await bounded(chunks.get()))["params"]["seq"], i)
             final = await bounded(posts.get())
             self.assertEqual(final["result"]["final_seq"], 6)
 
-            control("actor/cancel", "six")  # cannot overwrite confirmed success
-            control("actor/credit", "six", 6)
+            control("stream/cancel", "six")  # cannot overwrite confirmed success
+            control("stream/ack", "six", 6)
 
             # A separate invocation can still be canceled while its handler waits.
             entered.clear()
             stopped.clear()
             invoke("cancel", "hold")
             await bounded(entered.wait())
-            control("actor/cancel", "cancel")
+            control("stream/cancel", "cancel")
             terminal = await bounded(posts.get())
             self.assertEqual(terminal["id"], "cancel")
             self.assertEqual(terminal["error"]["data"]["final_seq"], 0)
@@ -348,7 +386,7 @@ class ProviderCancellationTests(unittest.IsolatedAsyncioTestCase):
         await registration.dispatch(message)
         await registration.dispatch(
             p.notification(
-                "actor/cancel",
+                "stream/cancel",
                 {
                     "request_id": "pending",
                     "stream_token": TOKEN,

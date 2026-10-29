@@ -50,7 +50,7 @@ A fresh Counter consumer prints `5`, `10`, `5`; another run with the same IDs pr
 | `StreamActor.HandleStream(ctx, message, writer) error` | Write chunks with writer.Write; the SDK submits the terminal after return |
 | `rt.Addr(type, id)` / `addr.Address()` | Local handle / independent address snapshot; generation starts empty |
 | `addr.Call(ctx, message)` | Five-second total budget, including Addr queuing and HTTP; earlier context deadlines win |
-| `addr.Stream(ctx, message, opts...)` | Establish and validate stream_open; WithStreamTimeout(d) accepts `(0, 60s]`, default five seconds |
+| `addr.Stream(ctx, message, opts...)` | Establish and validate stream/opened; WithStreamTimeout(d) accepts `(0, 60s]`, default five seconds |
 | `stream.Next()` / `Value()` / `Err()` | Single-consumer iteration; check Err after Next returns false; Value is generic JSON |
 | `stream.Close()` | Idempotent; may interrupt Next concurrently; required on early break |
 | `rt.WaitClosed(ctx)` | Wait for closure or provider disconnection, retaining the reason |
@@ -83,7 +83,7 @@ Possible admission without trustworthy generation evidence makes an Addr uncerta
 
 ## Streams and shutdown
 
-Stream validates stream_open before returning and returns pre-SSE JSON RPC errors directly. stream_open does not pin generation. Next delivers an item; the next call acknowledges it, including the call after processing the final item. Each segment has its own four-item/32 KiB window, counting queued and current items. Exhaustion requires an explicit terminal; EOF is not success. Partial failure does not undo consumed content. The total deadline includes queuing, connection, execution and consumption, without renewal per chunk.
+Stream validates stream/opened before returning and returns pre-SSE JSON RPC errors directly. stream/opened does not pin generation. Next delivers an item; the next call acknowledges it, including the call after processing the final item. Each segment has its own four-item/32 KiB window, counting queued and current items. Exhaustion requires an explicit terminal; EOF is not success. Partial failure does not undo consumed content. The total deadline includes queuing, connection, execution and consumption, without renewal per chunk.
 
 Use Next/Value/Err from one consumer. Close may run concurrently with Next, cancels an unfinished stream and joins its reader. Always defer stream.Close so an early break also cleans up. A Stream owns its Addr operation slot until consumption ends or it closes; other operations on that Addr wait.
 

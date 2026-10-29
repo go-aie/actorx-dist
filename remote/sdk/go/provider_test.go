@@ -124,7 +124,7 @@ func (g *providerGateway) roundTrip(req *http.Request) (*http.Response, error) {
 		})})
 		return sseResponse(body), nil
 	}
-	if (m.Request && (m.Method != "actor/chunk" || m.ID != nil)) ||
+	if (m.Request && (m.Method != "stream/chunk" || m.ID != nil)) ||
 		!strings.HasPrefix(req.Header.Get("X-Actorx-Remote-Session"), "session-") ||
 		req.Header.Get("Accept") != "application/json" {
 		g.t.Error("invalid provider response or session header")

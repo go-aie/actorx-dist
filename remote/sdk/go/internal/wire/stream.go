@@ -81,11 +81,11 @@ func Notification(method string, params any) ([]byte, error) {
 
 func Control(m Message) (json.RawMessage, string, uint64, error) {
 	bad := fmt.Errorf("invalid stream control")
-	if !m.Request || m.ID != nil || (m.Method != "actor/credit" && m.Method != "actor/cancel") {
+	if !m.Request || m.ID != nil || (m.Method != "stream/ack" && m.Method != "stream/cancel") {
 		return nil, "", 0, bad
 	}
 	names := []string{"request_id", "stream_token"}
-	if m.Method == "actor/credit" {
+	if m.Method == "stream/ack" {
 		names = append(names, "ack_seq")
 	}
 	f, err := Fields(m.Params, names, names...)
@@ -100,7 +100,7 @@ func Control(m Message) (json.RawMessage, string, uint64, error) {
 		return nil, "", 0, bad
 	}
 	var seq uint64
-	if m.Method == "actor/credit" {
+	if m.Method == "stream/ack" {
 		seq, err = Sequence(f["ack_seq"])
 	}
 	return bytes.Clone(f["request_id"]), token, seq, err

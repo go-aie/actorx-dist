@@ -62,7 +62,7 @@ type Stream struct {
 	controlMu   sync.Mutex // serializes credit and cancellation POSTs
 }
 
-// Stream establishes HTTP and validates stream_open before returning. Requests
+// Stream establishes HTTP and validates stream/opened before returning. Requests
 // and chunks follow encoding/json; decoded values preserve json.Number.
 func (a *Addr) Stream(parent context.Context, message any, opts ...StreamOption) (*Stream, error) {
 	o := streamOptions{callTimeout}
@@ -83,7 +83,7 @@ func (a *Addr) Stream(parent context.Context, message any, opts ...StreamOption)
 		return nil, err
 	}
 
-	// Setup owns cleanup until stream_open is validated. After that, the
+	// Setup owns cleanup until stream/opened is validated. After that, the
 	// stream's close goroutine owns the budget, Runtime work and Addr lock.
 	owned := false
 	locked := false
@@ -253,7 +253,7 @@ func (a *Addr) Stream(parent context.Context, message any, opts ...StreamOption)
 		// best effort; no new timeout or retry is started after caller cancellation.
 		s.controlMu.Lock()
 		if !remote && budget.Err() == nil {
-			_ = s.control(budget, "actor/cancel", 0)
+			_ = s.control(budget, "stream/cancel", 0)
 		}
 		s.controlMu.Unlock()
 
@@ -269,7 +269,7 @@ func (a *Addr) Stream(parent context.Context, message any, opts ...StreamOption)
 
 func (s *Stream) open(raw []byte) error {
 	m, err := wire.Parse(raw)
-	if err != nil || !m.Request || m.Method != "actor/stream_open" || m.ID != nil {
+	if err != nil || !m.Request || m.Method != "stream/opened" || m.ID != nil {
 		return protocolError()
 	}
 	names := []string{"request_id", "stream_token", "window"}
@@ -345,7 +345,7 @@ func (s *Stream) read() {
 
 // Called under mu once published; during setup no other goroutine has access.
 func (s *Stream) chunk(m wire.Message, size int) error {
-	if m.Method != "actor/chunk" || m.ID != nil {
+	if m.Method != "stream/chunk" || m.ID != nil {
 		return protocolError()
 	}
 	names := []string{"request_id", "stream_token", "address", "seq", "value"}
@@ -442,7 +442,7 @@ func (s *Stream) control(ctx context.Context, method string, seq uint64) error {
 		return nil
 	}
 	p := map[string]any{"request_id": s.id, "stream_token": s.token}
-	if method == "actor/credit" {
+	if method == "stream/ack" {
 		p["ack_seq"] = seq
 	}
 	raw, err := wire.Notification(method, p)
@@ -477,7 +477,7 @@ func (s *Stream) Next() bool {
 	// asking for the next item, including after processing the final item.
 	if previous != 0 {
 		s.controlMu.Lock()
-		err := s.control(s.ioCtx, "actor/credit", previous)
+		err := s.control(s.ioCtx, "stream/ack", previous)
 		s.controlMu.Unlock()
 		if err != nil {
 			s.mu.Lock()

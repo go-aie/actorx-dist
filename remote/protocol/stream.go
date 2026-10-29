@@ -8,10 +8,10 @@ import (
 
 const (
 	Stream      = "actor/stream"
-	StreamOpen  = "actor/stream_open"
-	ChunkMethod = "actor/chunk"
-	Credit      = "actor/credit"
-	Cancel      = "actor/cancel"
+	StreamOpen  = "stream/opened"
+	ChunkMethod = "stream/chunk"
+	Credit      = "stream/ack"
+	Cancel      = "stream/cancel"
 	MaxSequence = uint64(1<<53 - 1)
 )
 

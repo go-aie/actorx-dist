@@ -21,7 +21,7 @@
 // return promptly: Go cannot forcibly stop them, and their locks and execution
 // slots remain held until they actually return.
 //
-// Addr.Stream validates stream_open before returning an explicitly owned Stream.
+// Addr.Stream validates stream/opened before returning an explicitly owned Stream.
 // Iterate with Next/Value, then check Err. Next acknowledges the previous item;
 // Close is required after an early break and may interrupt a blocked Next.
 // Streams hold their Addr operation lock through consumption or Close.

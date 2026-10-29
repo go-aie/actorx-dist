@@ -36,7 +36,7 @@ func newConsumerGateway(t *testing.T) (*Runtime, *Addr, *consumerGateway) {
 				t.Error("missing SSE Accept")
 			}
 			g.request = m
-			g.body.send(streamNotification("actor/stream_open", map[string]any{"request_id": m.ID, "stream_token": testToken, "window": wire.StreamWindow()}))
+			g.body.send(streamNotification("stream/opened", map[string]any{"request_id": m.ID, "stream_token": testToken, "window": wire.StreamWindow()}))
 			return sseResponse(g.body), nil
 		}
 		if m.Method == "actor/call" {
@@ -56,7 +56,7 @@ func streamNotification(method string, params any) wire.Message {
 }
 
 func (g *consumerGateway) chunk(seq uint64, value any) {
-	g.body.send(streamNotification("actor/chunk", map[string]any{
+	g.body.send(streamNotification("stream/chunk", map[string]any{
 		"request_id":   g.request.ID,
 		"stream_token": testToken,
 		"address":      selected,
@@ -209,6 +209,7 @@ func TestConsumerStreamProtocolFailuresAreUnknown(t *testing.T) {
 		"error-seq",
 		"fifth",
 		"unknown-field",
+		"legacy-chunk",
 		"oversize",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -248,7 +249,11 @@ func TestConsumerStreamProtocolFailuresAreUnknown(t *testing.T) {
 				case "unknown-field":
 					p["x"] = true
 				}
-				g.body.send(streamNotification("actor/chunk", p))
+				method := "stream/chunk"
+				if name == "legacy-chunk" {
+					method = "actor/chunk"
+				}
+				g.body.send(streamNotification(method, p))
 			}
 			waitTerminal(t, s)
 			if s.Next() || !errors.Is(s.Err(), ErrOutcomeUnknown) {
@@ -288,10 +293,10 @@ func TestConsumerStreamCloseUnblocksNextAndReleasesAddr(t *testing.T) {
 			}
 			// Next may acknowledge the consumed prefix before Close sends cancel.
 			m := waitValue(t, g.controls)
-			if mode == "selected" && m.Method == "actor/credit" {
+			if mode == "selected" && m.Method == "stream/ack" {
 				m = waitValue(t, g.controls)
 			}
-			if m.Method != "actor/cancel" {
+			if m.Method != "stream/cancel" {
 				t.Fatal(m)
 			}
 			if err := s.Close(); err != nil {
@@ -381,7 +386,7 @@ func TestConsumerStreamDeadlinesAndAddrQueue(t *testing.T) {
 }
 
 func TestConsumerStream1013AndSetupRejections(t *testing.T) {
-	for _, name := range []string{"1013", "missing-address", "bad-final", "401", "500", "bad-open", "json-success", "connect"} {
+	for _, name := range []string{"1013", "missing-address", "bad-final", "401", "500", "bad-open", "legacy-open", "json-success", "connect"} {
 		t.Run(name, func(t *testing.T) {
 			_, a := newTestRuntime(t, func(req *http.Request) (*http.Response, error) {
 				m := rpcRequest(t, req)
@@ -400,12 +405,18 @@ func TestConsumerStream1013AndSetupRejections(t *testing.T) {
 				if name == "json-success" {
 					return success(m.ID, selected, nil), nil
 				}
-				if name == "bad-open" {
+				if name == "bad-open" || name == "legacy-open" {
 					b := newProviderBody()
-					b.send(streamNotification("actor/stream_open", map[string]any{
+					method := "stream/opened"
+					window := map[string]any{"items": 4, "bytes": 32768, "x": 1}
+					if name == "legacy-open" {
+						method = "actor/stream_open"
+						delete(window, "x")
+					}
+					b.send(streamNotification(method, map[string]any{
 						"request_id":   m.ID,
 						"stream_token": testToken,
-						"window":       map[string]any{"items": 4, "bytes": 32768, "x": 1},
+						"window":       window,
 					}))
 					return sseResponse(b), nil
 				}
@@ -453,7 +464,7 @@ func TestConsumerStreamRuntimeCloseAndBlockedCredit(t *testing.T) {
 			held := make(chan struct{})
 			if mode == "blocked-credit" {
 				g.hook = func(req *http.Request, m wire.Message) (*http.Response, error) {
-					if m.Method == "actor/credit" {
+					if m.Method == "stream/ack" {
 						close(held)
 						<-req.Context().Done()
 						return nil, req.Context().Err()
@@ -488,7 +499,7 @@ func TestConsumerStreamRuntimeCloseAndBlockedCredit(t *testing.T) {
 			}
 			for {
 				m := waitValue(t, g.controls)
-				if m.Method == "actor/cancel" {
+				if m.Method == "stream/cancel" {
 					break
 				}
 			}

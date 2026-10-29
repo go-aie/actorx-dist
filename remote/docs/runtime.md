@@ -113,7 +113,7 @@ The independent-process example demonstrates the local source chain, not release
 
 ## Protocol and Type migration
 
-Both segments use `actor/call` and `actor/stream`. Upgrade the gateway and both SDKs together within the current unpublished v1 development version. Stream control names, accepted inputs, absolute deadlines and internal DTOs/bindings remain unchanged.
+Both segments use `actor/call` and `actor/stream`; Stream messages use `stream/opened`, `stream/chunk`, `stream/ack` and `stream/cancel`, with no wire aliases for the old names. Upgrade the gateway and both SDKs together within the current unpublished v1 development version. Accepted inputs, absolute deadlines and internal DTOs/bindings remain unchanged.
 
 The Actor directory uses `runtime/actors` and the result field `actors`; the Go API is `Gateway.Actors()`. The unavailable error is `actor_unavailable` (1002). Earlier development names have been removed, so directory callers and error handling must be updated together. This naming change does not alter actorx-dist DTOs or Type contracts.
 

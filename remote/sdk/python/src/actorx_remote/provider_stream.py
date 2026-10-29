@@ -42,7 +42,7 @@ class ProviderStream:
     def control(self, message: p.Message) -> None:
         method = message["method"]
         required = ["request_id", "stream_token"]
-        if method == "actor/credit":
+        if method == "stream/ack":
             required.append("ack_seq")
         c = p.fields(message.get("params"), required, required)
         rpc_id = self.work.message["id"]
@@ -52,7 +52,7 @@ class ProviderStream:
             or c["stream_token"] != self.token
         ):
             raise ProtocolError("Stream control correlation mismatch")
-        if method == "actor/cancel":
+        if method == "stream/cancel":
             if not self.finished:
                 self.work.cancel_operation()
             return
@@ -81,7 +81,7 @@ class ProviderStream:
         self.check_sending()
         seq = sequence(self.seq + 1)
         m = p.notification(
-            "actor/chunk",
+            "stream/chunk",
             {
                 "request_id": self.work.message["id"],
                 "stream_token": self.token,

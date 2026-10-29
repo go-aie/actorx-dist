@@ -60,6 +60,17 @@ class ProtocolTests(unittest.TestCase):
                     self.assertEqual(
                         message["params"]["window"], {"items": 4, "bytes": 32768}
                     )
+        control = {"request_id": "c:stream-1", "stream_token": "A" * 43}
+        for name, method, extra in (
+            ("stream_opened", "stream/opened", {"window": {"items": 4, "bytes": 32768}}),
+            ("stream_chunk", "stream/chunk", {"address": ADDRESS, "seq": 1, "value": None}),
+            ("stream_ack", "stream/ack", {"ack_seq": 1}),
+            ("stream_cancel", "stream/cancel", {}),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    vectors[name], p.notification(method, {**control, **extra})
+                )
         self.assertEqual(
             vectors["register"],
             p.request(

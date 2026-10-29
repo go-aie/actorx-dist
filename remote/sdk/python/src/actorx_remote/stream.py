@@ -129,7 +129,7 @@ class Stream:
                         seq, self.previous = self.previous, 0
                         self.sizes.pop(seq, None)
                         try:
-                            await self._control("actor/credit", seq)
+                            await self._control("stream/ack", seq)
                         except (TransportError, TimeoutError):
                             if not self.terminal:
                                 raise
@@ -207,8 +207,8 @@ class Stream:
                         async for raw_frame in frames(response):
                             m = p.envelope(raw_frame)
                             if self.token is None:
-                                if m.get("method") != "actor/stream_open" or "id" in m:
-                                    raise ProtocolError("Expected stream_open")
+                                if m.get("method") != "stream/opened" or "id" in m:
+                                    raise ProtocolError("Expected stream/opened")
                                 params = p.fields(
                                     m.get("params"),
                                     ("request_id", "stream_token", "window"),
@@ -224,12 +224,12 @@ class Stream:
                                     )
                                 ):
                                     raise ProtocolError(
-                                        "Invalid stream_open correlation/window"
+                                        "Invalid stream/opened correlation/window"
                                     )
                                 self.token = token(params["stream_token"])
 
                             elif "method" in m:
-                                if m["method"] != "actor/chunk" or "id" in m:
+                                if m["method"] != "stream/chunk" or "id" in m:
                                     raise ProtocolError("Expected chunk notification")
                                 c = p.fields(
                                     m.get("params"),
@@ -362,7 +362,7 @@ class Stream:
     async def _close(self) -> None:
         if not self.remote_terminal:
             try:
-                await self._control("actor/cancel")
+                await self._control("stream/cancel")
             except (TransportError, TimeoutError):
                 pass
             if self.dispatched and "generation" not in self.addr._address:

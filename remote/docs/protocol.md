@@ -19,7 +19,7 @@ An object may implement either method or both; the operations share instance sta
 
 Both sides initiate connections to the gateway. Providers keep a registration SSE connection for creation, execution and stream control, posting results or chunks separately. They need no inbound listener.
 
-Each stage starts with an overview sequence diagram, followed by method definitions and JSON examples: [registration and discovery](#registration-and-discovery), [Call](#call-exchange), and [Stream](#stream-exchange). [Early cancellation](#actorcancel-cancel-early) has a separate diagram. Provider POSTs carry the session header; diagrams omit their HTTP 204 handoff acknowledgments unless shown explicitly.
+Each stage starts with an overview sequence diagram, followed by method definitions and JSON examples: [registration and discovery](#registration-and-discovery), [Call](#call-exchange), and [Stream](#stream-exchange). [Early cancellation](#streamcancel-cancel-early) has a separate diagram. Provider POSTs carry the session header; diagrams omit their HTTP 204 handoff acknowledgments unless shown explicitly.
 
 ## Transport and messages
 
@@ -38,7 +38,7 @@ The SDK sends v1 automatically and validates registration results. After authent
 | POST content | Additional header | Normal response |
 | --- | --- | --- |
 | `runtime/register` | `Accept: text/event-stream, application/json` | 200 SSE: registration result, then that registration's creation, execution and credit/cancel messages |
-| `actor/stream` | Same as above | 200 SSE: stream_open, chunks, final result/error |
+| `actor/stream` | Same as above | 200 SSE: stream/opened, chunks, final result/error |
 | Call, Actor directory, ordinary request batch | `Accept: application/json` | 200 JSON result/error or response array |
 | Provider result, error or chunk | `X-Actorx-Remote-Session: <session_token>` | 204 after validation and handoff |
 | Consumer credit/cancel | No session header; one notification per POST | 204 after validation and handoff |
@@ -74,7 +74,7 @@ Ordinary request batches contain at most eight items and execute sequentially wi
 
 `type` identifies an Actor type and `id` a business instance. The first `actor/call` or `actor/stream` may omit generation; the gateway selects it through actorx-dist. A generation is a canonical unpadded base64url encoding of 16 bytes. Provider creation/execution messages require complete addresses.
 
-The SDK saves generation from a successful result, valid error address or first Stream item. Later operations remain fixed to it, without automatic replacement on error. stream_open has no address and only establishes control; empty streams supply the address in their terminal. A possibly accepted request without trustworthy generation evidence leaves the handle uncertain; later operations raise `AddressUncertainError`. A fresh handle does not deduplicate earlier work. Authentication/parameter rejection and definite connection-establishment failure do not contaminate the handle.
+The SDK saves generation from a successful result, valid error address or first Stream item. Later operations remain fixed to it, without automatic replacement on error. stream/opened has no address and only establishes control; empty streams supply the address in their terminal. A possibly accepted request without trustworthy generation evidence leaves the handle uncertain; later operations raise `AddressUncertainError`. A fresh handle does not deduplicate earlier work. Authentication/parameter rejection and definite connection-establishment failure do not contaminate the handle.
 
 All methods appear below. Params are required unless marked optional; a fixed address includes generation. `window` is always `{"items":4,"bytes":32768}`.
 
@@ -85,14 +85,14 @@ All methods appear below. Params are required unless marked optional; a fixed ad
 | `actor/call` | Request | address, input; optional deadline_unix_ms | Fixed address, value |
 | `actor/create` | Request | Fixed address, deadline_unix_ms | Same address |
 | `actor/stream` | Request | Common Call fields; provider requests also require stream_token, window | Fixed address, final_seq |
-| `actor/stream_open` | Notification | request_id, stream_token, window | None |
-| `actor/chunk` | Notification | request_id, stream_token, fixed address, seq, value | None |
-| `actor/credit` | Notification | request_id, stream_token, ack_seq | None |
-| `actor/cancel` | Notification | request_id, stream_token | None |
+| `stream/opened` | Notification | request_id, stream_token, window | None |
+| `stream/chunk` | Notification | request_id, stream_token, fixed address, seq, value | None |
+| `stream/ack` | Notification | request_id, stream_token, ack_seq | None |
+| `stream/cancel` | Notification | request_id, stream_token | None |
 
 `actor/call` and `actor/stream` use the same operation names on both segments. Their common business fields are `address`, `input` and `deadline_unix_ms`; successful Call results carry the fixed `address` and `value`. The gateway selects a generation when needed and forwards the fixed address and established absolute deadline using an independent request ID. Provider dispatch requires generation and an explicit deadline; Stream also requires a preinstalled `stream_token` and `window`. Consumer requests still reject those control fields and may omit generation/deadline. This naming change does not expand accepted inputs or change execution constraints.
 
-This is an incompatible update within the current unpublished `actorx.remote/v1` development version: gateway and SDKs must be upgraded together. Stream controls retain `actor/stream_open`, `actor/chunk`, `actor/credit` and `actor/cancel`.
+This is an incompatible update within the current unpublished `actorx.remote/v1` development version: gateway and SDKs must be upgraded together. Stream messages use `stream/opened`, `stream/chunk`, `stream/ack` and `stream/cancel`; the former `actor/stream_open`, `actor/chunk`, `actor/credit` and `actor/cancel` names are no longer accepted as wire aliases. Message bodies, flow control, cancellation and HTTP status handling remain unchanged.
 
 Registration establishes the provider session without creating an Actor instance or verifying that instance creation will succeed. The Actor directory lists current registrations, not running instances, and does not promise later availability. Its protocol identifies communication rules, without promising business method support. v1 registration params/results and Actor entries have no `capabilities`. Removed registration params are rejected even when false, null or empty; the SDK also rejects registration results containing that field.
 
@@ -344,7 +344,7 @@ sequenceDiagram
     participant G as Gateway
     participant P as Provider
     C->>G: actor/stream, id=c:2 (HTTP POST, accept SSE)
-    G-->>C: actor/stream_open (consumer SSE)
+    G-->>C: stream/opened (consumer SSE)
     Note over C,G: Control is open, activation may still be pending
     opt Instance needs activation
         G->>G: Select generation through actorx-dist
@@ -355,16 +355,16 @@ sequenceDiagram
     P->>P: Iterate handle_stream(message)
     par Provider segment
         loop Zero or more chunks, within the provider window
-            P->>G: actor/chunk (HTTP POST)
+            P->>G: stream/chunk (HTTP POST)
             G->>G: Proxy Write hands item to actorx-dist
-            G-->>P: actor/credit (registration SSE)
+            G-->>P: stream/ack (registration SSE)
         end
         P->>G: Result + final_seq, id=g:stream-1 (HTTP POST)
     and Consumer segment
         loop Zero or more chunks, within the consumer window
-            G-->>C: actor/chunk (consumer SSE)
+            G-->>C: stream/chunk (consumer SSE)
             C->>C: Process item, then request the next
-            C->>G: actor/credit (HTTP POST)
+            C->>G: stream/ack (HTTP POST)
         end
     end
     G-->>C: Result + final_seq, id=c:2 (consumer SSE)
@@ -372,7 +372,7 @@ sequenceDiagram
 
 The two segments use independent IDs, tokens, sequences and credit ledgers. Their loops progress independently under bounded flow control; the provider terminal may arrive while the consumer segment is still draining. Provider credit follows a successful proxy Write into actorx-dist, without proving final consumer consumption. The provider must also wait for each upload's HTTP 204 before its next chunk or terminal; that handoff acknowledgment is separate from credit.
 
-`stream_open` has no address and does not prove activation or execution success. Each Stream produces zero or more chunks and one terminal result/error for the original request ID. Success waits for all consumer items to be acknowledged; an error may discard queued items. EOF without a valid terminal is not success. See [flow control and terminal results](#flow-control-and-terminal-results) for the exact rules.
+`stream/opened` has no address and does not prove activation or execution success. Each Stream produces zero or more chunks and one terminal result/error for the original request ID. Success waits for all consumer items to be acknowledged; an error may discard queued items. EOF without a valid terminal is not success. See [flow control and terminal results](#flow-control-and-terminal-results) for the exact rules.
 
 The gateway generates independent RPC IDs and stream tokens for the two segments and maps them. Tokens are canonical unpadded base64url encodings of 32 random bytes. Consumers receive neither the provider session token nor its stream token. The example distinguishes the segments as follows:
 
@@ -404,14 +404,14 @@ Consumer → gateway, one HTTP POST accepting SSE; params have the same shape as
 }
 ```
 
-### actor/stream_open: establish control
+### stream/opened: establish control
 
 Gateway → consumer, the first notification on the request SSE, supplying its consumer token and fixed window:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "actor/stream_open",
+  "method": "stream/opened",
   "params": {
     "request_id": "c:2",
     "stream_token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -456,14 +456,14 @@ Gateway → provider, over registration SSE, using a separate RPC ID and provide
 
 The provider calls `handle_stream(message)` and iterates its output. Creation, execution and control messages for different instances may interleave on one registration SSE.
 
-### actor/chunk: send an item
+### stream/chunk: send an item
 
 Provider → gateway, one notification POST with the session header; `request_id` references the provider execution request:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "actor/chunk",
+  "method": "stream/chunk",
   "params": {
     "request_id": "g:stream-1",
     "stream_token": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
@@ -483,14 +483,14 @@ Provider → gateway, one notification POST with the session header; `request_id
 
 After validation, the gateway forwards the same value over consumer SSE with the consumer ID/token and independently computed sequence; both sequences are 1 here. Notifications have no ID of their own. `value` is required but may be null. The provider waits for each POST's 204 before sending the next item or terminal.
 
-### actor/credit: acknowledge consumption
+### stream/ack: acknowledge consumption
 
 After processing an item, when iteration requests the next one, the consumer POSTs a notification to the gateway without a session header:
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "actor/credit",
+  "method": "stream/ack",
   "params": {
     "request_id": "c:2",
     "stream_token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
@@ -541,7 +541,7 @@ After the consumer segment's items are consumed, the gateway returns the origina
 
 `final_seq: 0` is a valid empty stream. Failure returns error with the same ID and the segment's final_seq in data; consumed output is not rolled back. EOF without a valid terminal cannot mean success.
 
-### actor/cancel: cancel early
+### stream/cancel: cancel early
 
 Once stream control is open, the consumer can request early cancellation instead of continuing consumption. The diagram shows cancellation of an active provider execution; an already established terminal is retained.
 
@@ -551,11 +551,11 @@ sequenceDiagram
     participant G as Gateway
     participant P as Provider
     Note over C,P: Stream control is open, provider execution is active
-    C->>G: actor/cancel (HTTP POST, consumer ID/token)
+    C->>G: stream/cancel (HTTP POST, consumer ID/token)
     par HTTP acknowledgment
         G-->>C: HTTP 204 (handoff only)
     and Execution cancellation
-        G-->>P: actor/cancel (registration SSE, provider ID/token)
+        G-->>P: stream/cancel (registration SSE, provider ID/token)
         P->>P: Request cancellation of this task
     end
     Note over C,P: Cancellation acknowledgment does not prove handler exit
@@ -568,7 +568,7 @@ Consumer → gateway, one notification POST without a session header:
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "actor/cancel",
+  "method": "stream/cancel",
   "params": {
     "request_id": "c:2",
     "stream_token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -609,7 +609,7 @@ Missing terminal, disconnection, missing items or sequence/identity contradictio
 
 Python Stream `timeout` accepts (0, 60] seconds and uses a monotonic clock for waits. Chunks/credits do not renew it. Expiry before handler start produces 1005; expiry after start without trustworthy terminal evidence produces 1004.
 
-`actor/cancel` targets one Stream request, preserving the shared Actor/registration. Call has no remote cancellation method. A cancellation POST's 204 does not prove handler exit. The SDK holds instance locks and execution slots until user tasks actually exit, preventing overlap with subsequent operations. Timeout and disconnect do not prove external side effects have ended either.
+`stream/cancel` targets one Stream request, preserving the shared Actor/registration. Call has no remote cancellation method. A cancellation POST's 204 does not prove handler exit. The SDK holds instance locks and execution slots until user tasks actually exit, preventing overlap with subsequent operations. Timeout and disconnect do not prove external side effects have ended either.
 
 Python consumers should use `async with` and `async for`. An early break must leave the context or explicitly `await chunks.aclose()`; Runtime shutdown also owns cleanup. Provider disconnection withdraws its registration and wakes pending requests without automatic recovery. See [runtime ownership and shutdown](runtime.md#disconnect-and-shutdown).
 

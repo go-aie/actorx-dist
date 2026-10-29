@@ -113,7 +113,7 @@ Python `Runtime.close()` 关闭连接、取消并汇合 SDK 自有任务，然�
 
 ## 协议与 Type 迁移
 
-两段均使用 `actor/call`、`actor/stream`。当前未发布 v1 开发版本内须配套升级 gateway 和两个 SDK。流控制名称、输入接受范围、绝对期限及内部 DTO/绑定保持不变。
+两段均使用 `actor/call`、`actor/stream`；Stream 消息使用 `stream/opened`、`stream/chunk`、`stream/ack`、`stream/cancel`，旧名称不作为 wire 别名。当前未发布 v1 开发版本内须配套升级 gateway 和两个 SDK。输入接受范围、绝对期限及内部 DTO/绑定保持不变。
 
 Actor 目录统一使用 `runtime/actors` 和结果字段 `actors`，Go 接口为 `Gateway.Actors()`；不可用错误为 `actor_unavailable`（1002）。早期开发名称已移除，目录与错误处理的调用方需同步更新；本次命名调整不改变 actorx-dist DTO 或 Type 契约。
 
