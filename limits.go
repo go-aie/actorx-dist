@@ -10,7 +10,7 @@ import (
 // Runtime. Zero fields select defaults; negative fields are invalid.
 type ExecutionLimits struct {
 	// Types bounds locally registered Actor types. The default is unlimited.
-	// It does not bound the client's known-contract cache or other Runtimes.
+	// It does not bound the consumer's known-contract cache or other Runtimes.
 	Types int
 	// Creating bounds concurrent instance creation and startup across all types.
 	// The default is 16; creation also occupies an Instances slot.

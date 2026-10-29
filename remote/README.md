@@ -10,7 +10,7 @@ The directory observes Remote types across the distributed Runtime during a coll
 
 ## Architecture and data flow
 
-Consumer application code uses the Remote SDK to make Calls or consume Streams. A provider application uses the SDK to register Actors and run business Actors. The gateway connects the two sides and uses actorx-dist for routing and activation.
+As in the actorx-dist examples, a **consumer** calls Actors and a **provider** registers Actor types and runs business Actors. Both use the Remote SDK, and one application can serve both responsibilities. Remote adds a **gateway** that connects the two sides and uses actorx-dist for routing and activation.
 
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 30, "padding": 14, "subGraphTitleMargin": {"top": 0, "bottom": 10}}}}%%

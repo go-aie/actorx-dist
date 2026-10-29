@@ -7,7 +7,7 @@
 ```text
 ActorKey（Type + ID，跨代不变）
     └─ generation（一次激活，退出后不复用）
-           └─ worker 中的 Actor 实例（内存状态与资源）
+           └─ provider 中的 Actor 实例（内存状态与资源）
 Addr 首次选代后固定；新 Addr 才能选择下一代。
 ```
 
@@ -17,7 +17,7 @@ generation 是不透明标识，不要求递增，也不同于 KV 条件更新�
 
 ## 声明与启动
 
-工作进程用 `rt.Register(ctx, spec)` 声明创建能力，`ActorSpec[T]` 提供 Type 和 New，T 是实现 actorx.Actor 的具体 struct 指针；纯调用方省略注册。Runtime 拥有连接、本地实例与管理工作。NewRuntime 成功表示执行、连接和存储就绪；Register 成功表示该次注册的契约和激活入口就绪，此时尚未构造业务对象。启动和运行期间均使用同一注册接口。通常忽略注册句柄，退出时由 Runtime.Close 统一撤销并等待收尾；需要独立控制某个 Type 的寿命时，再看[注册与撤销](runtime.zh.md#注册与撤销)。
+提供方用 `rt.Register(ctx, spec)` 声明创建能力，`ActorSpec[T]` 提供 Type 和 New，T 是实现 actorx.Actor 的具体 struct 指针；纯调用方省略注册。Provider（提供方）也可以调用其他 Actor，同一个 Runtime 可以同时承担 provider 和 consumer（调用方）职责。Runtime 拥有连接、本地实例与管理工作。NewRuntime 成功表示执行、连接和存储就绪；Register 成功表示该次注册的契约和激活入口就绪，此时尚未构造业务对象。启动和运行期间均使用同一注册接口。通常忽略注册句柄，退出时由 Runtime.Close 统一撤销并等待收尾；需要独立控制某个 Type 的寿命时，再看[注册与撤销](runtime.zh.md#注册与撤销)。
 
 取得创建权后才调用 `New(ActorKey)`，每次返回新的非 nil 对象。New 只做短小本地构造，不启动 goroutine 或获取需清理的资源；依赖可由闭包捕获。可能失败的校验、资源获取和状态加载放在 Started，并由应用设置初始化上限。Bindings 不依赖实例状态，nil/live 描述须一致；生成绑定沿用 [actorx 规则](https://github.com/go-aie/actorx/blob/main/docs/runtime.zh.md)，注册和接入细节见[架构](architecture.zh.md#注册与上下文接入)。
 

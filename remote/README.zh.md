@@ -10,7 +10,7 @@ Remote 让不同语言编写的应用通过 HTTP 调用有状态 Actor：Call �
 
 ## 架构与数据流
 
-Consumer 应用中的业务代码通过 Remote SDK 发起 Call 或消费 Stream；provider 应用通过 SDK 注册 Actor 并运行自己的业务 Actor。Gateway 连接两端，通过 actorx-dist 完成路由与激活。
+与 actorx-dist 示例相同，**consumer（调用方）**调用 Actor，**provider（提供方）**注册 Actor 类型并运行业务 Actor。两端均使用 Remote SDK，同一个应用可以同时承担两种职责。Remote 增加 **gateway（网关）**连接两端，通过 actorx-dist 完成路由与激活。
 
 ```mermaid
 %%{init: {"flowchart": {"rankSpacing": 30, "padding": 14, "subGraphTitleMargin": {"top": 0, "bottom": 10}}}}%%

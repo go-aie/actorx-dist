@@ -51,7 +51,7 @@ READY proves synchronous Started and ready subscription, not asynchronous busine
 
 | Durable facts at crash / lost response | What can be concluded |
 | --- | --- |
-| no confirmed claim, possible STARTING write | verify original proposed generation/op; never generate a replacement merely because client timed out |
+| no confirmed claim, possible STARTING write | verify original proposed generation/op; never generate a replacement merely because the consumer timed out |
 | STARTING exists, constructor result only in dead process | ownership stays; no complete cleanup evidence, no successful Wait; explicit recovery after process fencing |
 | PREPARED only, current still STOPPING | cleanup evidence exists but release is not committed; Wait cannot succeed; live original owner can guarded-release/commit |
 | PREPARED plus matching INACTIVE release op/digest | original owner may verify and complete; operator recovery may use exact durable evidence after fencing; a restarted Runtime does not inherit the token |
@@ -66,7 +66,7 @@ There is intentionally no multi-key transaction or promise of successful Wait at
 
 For an INACTIVE candidate read key/gen/revision r and its exact COMMITTED/RELEASED terminal first. Then `current.Delete(a,nats.LastRevision(r))`. Success writes a tombstone, not a physical purge. Conflict abandons the candidate. On lost acknowledgement, bounded Get of latest: same candidate retries with original r only; missing/new generation stops modification. For raw tombstone evidence use `js.GetLastMsg("KV_actorxdist_default_activations_v1","$KV.actorxdist_default_activations_v1."+a)` and inspect Sequence, Subject and KV-Operation header; KV.Get/GetRevision intentionally hide deletion markers.
 
-A sequence scanner reads `js.StreamInfo(stream)` FirstSeq/LastSeq then at most 64 `js.GetMsg(stream,seq)` positions per second, with deadlines and skipped holes. It holds ≤32 candidates, wraps its cursor for another pass and does not accumulate all keys or create watch consumers. Validate raw subject, operation and record size before treating a frame as a candidate. There is one scanner per worker Runtime and none on pure callers. A candidate is always reread before mutation; restart may safely rescan.
+A sequence scanner reads `js.StreamInfo(stream)` FirstSeq/LastSeq then at most 64 `js.GetMsg(stream,seq)` positions per second, with deadlines and skipped holes. It holds ≤32 candidates, wraps its cursor for another pass and does not accumulate all keys or create watch consumers. Validate raw subject, operation and record size before treating a frame as a candidate. There is one scanner per provider Runtime and none on pure consumers. A candidate is always reread before mutation; restart may safely rescan.
 
 For physical tombstone cleanup, read the raw current delete marker with sequence d after eligibility checks, then `js.PurgeStream(stream,&nats.StreamPurgeRequest{Subject:exactKVSubject,Sequence:d+1})`. Sequence is exclusive: purge only records ≤d. Concurrent new records have a larger sequence and survive. Never use Keep=0 without a sequence cutoff, unconditional key Purge, DeleteMsg (KV denies it), or SDK PurgeDeletes: that SDK method scans delete markers and later purges by subject without a sequence fence. A lost purge response permits retry with the same d+1, never a new unlimited purge. Data-plane logical deletion, server message count/bytes recovery and actual disk reuse are distinct observations; real storage behavior is covered by the Registry and lifecycle gates.
 

@@ -66,7 +66,7 @@ READY 证明同步 Started 及订阅就绪，不证明异步业务就绪。普�
 
 对 INACTIVE 候选读取 key/gen/revision r，先核实精确 COMMITTED/RELEASED 终态，再 `current.Delete(a,nats.LastRevision(r))`。成功写入删除标记，不是物理回收。冲突放弃候选；丢确认后有界 Get 最新值，仍为同候选仅用原 r 重试，不存在/新代则不再修改。原始删除标记通过 `js.GetLastMsg("KV_actorxdist_default_activations_v1","$KV.actorxdist_default_activations_v1."+a)` 核对 Sequence、Subject、KV-Operation；KV.Get/GetRevision 会隐藏删除标记。
 
-序号 scanner 先 js.StreamInfo(stream) 得 FirstSeq/LastSeq，每秒最多64个 js.GetMsg(stream,seq) 位置，设 deadline、跳过空洞，仅保留32候选，游标回绕继续，不累积全部 key、不建 watch consumer。将原始消息当候选前核对 subject、operation、记录尺寸。每工作 Runtime 一个 scanner，纯调用方没有；变更前重新读取，重启可安全重扫。
+序号 scanner 先 js.StreamInfo(stream) 得 FirstSeq/LastSeq，每秒最多64个 js.GetMsg(stream,seq) 位置，设 deadline、跳过空洞，仅保留32候选，游标回绕继续，不累积全部 key、不建 watch consumer。将原始消息当候选前核对 subject、operation、记录尺寸。每个提供方 Runtime 一个 scanner，纯调用方没有；变更前重新读取，重启可安全重扫。
 
 物理回收先检查资格，再读当前原始删除标记序号 d，调用 `js.PurgeStream(stream,&nats.StreamPurgeRequest{Subject:exactKVSubject,Sequence:d+1})`。Sequence 是排他上界，仅清除≤d；并发新记录序号更大，不会被删。不允许无序号上界的 Keep=0、无条件 key Purge、DeleteMsg（KV 禁止），也不使用 SDK PurgeDeletes：该方法扫描标记后按 subject 清理，没有序号保护。丢回复可用同一 d+1 重试，不能改成无限清理。逻辑删除、服务端消息数/字节回收、实际磁盘复用须分别观察。
 

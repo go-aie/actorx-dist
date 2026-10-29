@@ -18,7 +18,7 @@ python3 -m venv /tmp/actorx-remote-demo-venv
 
 ## 一个 Actor，两种操作
 
-业务入口从 `actorx_remote` 导入。Actor 可实现 `handle`、`handle_stream` 中的一种或两种；将类传给 `runtime.register` 即可注册，如下例所示。以下代码放在已建立的 Runtime 中；provider 和 consumer 可位于独立进程：
+业务入口从 `actorx_remote` 导入。Actor 可实现 `handle`、`handle_stream` 中的一种或两种；将类传给 `runtime.register` 即可注册，如下例所示。以下代码放在已建立的 Runtime 中；provider（提供方）和 consumer（调用方）可位于独立进程：
 
 ```python
 from actorx_remote import Runtime

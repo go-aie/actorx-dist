@@ -1,5 +1,5 @@
 //go:generate go run github.com/go-aie/actorx/cmd/actorx-gen
-package main
+package chat
 
 import (
 	"context"

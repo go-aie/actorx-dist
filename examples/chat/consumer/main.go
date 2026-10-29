@@ -12,32 +12,27 @@ import (
 	"time"
 
 	"github.com/go-aie/actorx-dist"
+	"github.com/go-aie/actorx-dist/examples/chat"
 )
 
 func main() {
 	url := flag.String("nats", "nats://127.0.0.1:4222", "JetStream NATS URL")
-	role := flag.String("role", "client", "worker or client")
 	id := flag.String("id", "assistant-42", "logical Assistant ID")
-	delay := flag.Duration("consume-delay", 0, "delay in each client chunk callback (e.g. 100ms)")
+	delay := flag.Duration("consume-delay", 0, "delay in each consumer chunk callback (e.g. 100ms)")
 	flag.Parse()
 
-	if err := run(*url, *role, *id, *delay); err != nil {
+	if err := run(*url, *id, *delay); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(url, role, id string, delay time.Duration) (result error) {
+func run(url, id string, delay time.Duration) (result error) {
 	if delay < 0 {
 		return errors.New("consume-delay must not be negative")
 	}
-	options := []actorxdist.Option{actorxdist.WithNATS(url)}
-	if role != "worker" && role != "client" {
-		return fmt.Errorf("unknown role %q: want worker or client", role)
-	}
-
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	rt, err := actorxdist.NewRuntime(stop, options...)
+	rt, err := actorxdist.NewRuntime(stop, actorxdist.WithNATS(url))
 	if err != nil {
 		return err
 	}
@@ -48,19 +43,7 @@ func run(url, role, id string, delay time.Duration) (result error) {
 		result = errors.Join(result, rt.Close(ctx))
 	}()
 
-	if role == "worker" {
-		if _, err := rt.Register(stop, AssistantSpec); err != nil {
-			return err
-		}
-	}
-
-	if role == "worker" {
-		log.Print("Assistant worker ready")
-		<-stop.Done()
-		return nil
-	}
-
-	a, err := rt.Addr(AssistantSpec.Type, id)
+	a, err := rt.Addr(chat.AssistantSpec.Type, id)
 	if err != nil {
 		return err
 	}
@@ -71,7 +54,7 @@ func run(url, role, id string, delay time.Duration) (result error) {
 		return err
 	}
 	chunks := 0
-	if err := a.Stream[TextChunk](ctx, Ask{Topic: "Actors"}, func(chunk TextChunk) error {
+	if err := a.Stream[chat.TextChunk](ctx, chat.Ask{Topic: "Actors"}, func(chunk chat.TextChunk) error {
 		if _, err := fmt.Print(chunk.Text); err != nil {
 			return err
 		}

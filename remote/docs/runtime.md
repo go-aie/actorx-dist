@@ -53,9 +53,9 @@ For provider invocation:
 3. Expiry/cancellation after start without a valid terminal result is 1004. The SDK requests task cancellation and settles the RPC, but holds the instance lock and slot until the handler actually exits.
 4. A final response is submitted at most once and only within the original budget. There is no new budget or retry to report expiry. A handler returning after settlement only releases resources; it cannot send a second result.
 
-SSE reading and response I/O progress independently of instance locks. An uncooperative handler can keep its instance occupied and prevent SDK close from finishing. Client return, a canceled await, and provider EOF are not evidence that external side effects stopped. Call has no remote cancel method; Stream cancellation targets only its request.
+SSE reading and response I/O progress independently of instance locks. An uncooperative handler can keep its instance occupied and prevent SDK close from finishing. Consumer return, a canceled await, and provider EOF are not evidence that external side effects stopped. Call has no remote cancel method; Stream cancellation targets only its request.
 
-The Go proxy admits one active business operation (Call/Stream) per instance and returns full on overlap; the SDK serial lock also protects tasks that outlive a settled RPC. One Python Addr serializes its own calls, but independently obtained handles do not provide a shared client-side lock.
+The Go proxy admits one active business operation (Call/Stream) per instance and returns full on overlap; the SDK serial lock also protects tasks that outlive a settled RPC. One Python Addr serializes its own calls, but independently obtained handles do not provide a shared consumer-side lock.
 
 ## Resource limits
 

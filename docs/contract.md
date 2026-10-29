@@ -107,7 +107,7 @@ Let H=ContractCacheTypes (default64). The caller cache holds at most H Type inde
 | codec / Runtime | 8 concurrent encode/decode slots, each≤128 KiB input +128 KiB output; 2 MiB total; depth32/nodes8192 | reserve before traversal/copy → bytes handed to another charged owner or discarded; ErrFull/ErrChunkSize |
 | retained network payloads / Runtime | 32 buffers /4 MiB; associations retain metadata≤2 KiB each separately | before hold → final owner releases; no uncharged payload copy |
 | Stream consumer windows / Runtime | 16 incoming/outgoing streams combined, each4 items/64 KiB; reserve total64 items/1 MiB; active callback included | whole window before stream → callback joined and association closed; ErrFull; frame queues charged separately |
-| Registry scans / worker Runtime | 1 scanner; 64 sequence positions/page, ≤1 page/s, ≤32 retained candidates; no KV watches | before scan → page/attempt returns; pause on full; no write maintenance on callers |
+| Registry scans / provider Runtime | 1 scanner; 64 sequence positions/page, ≤1 page/s, ≤32 retained candidates; no KV watches | before scan → page/attempt returns; pause on full; no write maintenance on callers |
 | commit/control tasks / Runtime | existing64 generation entries, one work/generation; management/control queue and2 SDK slots reserved | cleanup start → verified commit/release; never discard evidence when full |
 | diagnostics / Runtime | nonblocking64 events, ≤1 KiB/event, overflow coalesced counter | callback → drain/close; no arbitrary user callback on SDK thread |
 
@@ -115,7 +115,7 @@ With default execution/transport limits and T registered Types, the two core eng
 
 Cache eviction releases only cached references; active calls retain immutable snapshots without pinning LRU entries. Re-reading an evicted contract may briefly coexist with an older snapshot. Eviction does not delete Registry contracts, withdraw registrations, stop Actors or change generations. Close joins admitted work before clearing the cache and rejects late fills.
 
-`TestSizingBaseline` measures serialized representative maximum frame/record/error fixtures and verifies budget arithmetic. The default 64 generations × eight 33 KiB state/exit/tombstone write allowances =16.5 MiB, below 30% of each 128 MiB bucket; this is sizing headroom only, not a global reservation. Timing, CPU, real record overhead, throughput and concurrent multi-worker storage headroom require deployment-specific calibration. Do not advertise these values as general recommendations.
+`TestSizingBaseline` measures serialized representative maximum frame/record/error fixtures and verifies budget arithmetic. The default 64 generations × eight 33 KiB state/exit/tombstone write allowances =16.5 MiB, below 30% of each 128 MiB bucket; this is sizing headroom only, not a global reservation. Timing, CPU, real record overhead, throughput and concurrent multi-provider storage headroom require deployment-specific calibration. Do not advertise these values as general recommendations.
 
 ## Reply and flow-control resources
 

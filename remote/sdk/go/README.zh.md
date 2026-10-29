@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-通过 HTTP/SSE 编写远程 Actor provider 和 consumer，支持 Call 与 Stream。模块为 `github.com/go-aie/actorx-dist/remote/sdk/go`，包名为 `actorxremote`，需要 Go 1.27，仅依赖标准库。应用只需 gateway origin 与 API Key，无需安装 actorx、actorx-dist 根模块或 NATS 客户端。
+通过 HTTP/SSE 编写远程 Actor provider（提供方）和 consumer（调用方），支持 Call 与 Stream。模块为 `github.com/go-aie/actorx-dist/remote/sdk/go`，包名为 `actorxremote`，需要 Go 1.27，仅依赖标准库。应用只需 gateway origin 与 API Key，无需安装 actorx、actorx-dist 根模块或 NATS 客户端。
 
 ## 运行
 

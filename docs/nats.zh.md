@@ -29,7 +29,7 @@ actorx-dist 使用 **Core NATS 传递请求和回复**，使用 **JetStream KV �
 理解这些能力时，需要区分三个边界：
 
 - **分发与归属：** queue group 为一次激活请求选择处理方；唯一归属由 KV 条件写入保证。按 revision 更新（CAS）要求记录仍是已观察的版本，才能推进状态。
-- **传输与持久状态：** 业务消息不写入 JetStream，Actor 业务状态保存在工作进程内存中。断线不缓冲或重放业务请求；重连校验后可恢复受理，但不自动接管失联 Actor，也不恢复旧流。
+- **传输与持久状态：** 业务消息不写入 JetStream，Actor 业务状态保存在提供方进程内存中。断线不缓冲或重放业务请求；重连校验后可恢复受理，但不自动接管失联 Actor，也不恢复旧流。
 - **流式传输与消费确认：** Stream 的序号、终止和窗口规则由 actorx-dist 协议实现。额度通过 Core NATS 返回，业务流不使用 JetStream consumer 的 ACK/流控。
 
 Remote provider/consumer 通过 HTTP/SSE 与 Gateway 通信；Gateway 内部的 actorx-dist Runtime 使用上述 NATS 路径。完整时序见[激活与业务路径](architecture.zh.md#激活与业务路径)，完成、取消与结果未知的语义见[调用语义](runtime.zh.md)。

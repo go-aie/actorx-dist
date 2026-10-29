@@ -29,7 +29,7 @@ Features use the capabilities as follows:
 Three boundaries help interpret these capabilities:
 
 - **Distribution and ownership:** a queue group selects a handler for an activation request; conditional KV writes establish unique ownership. A revision-based update (CAS) advances state only while the record still has the observed revision.
-- **Transport and durable state:** business messages are not stored in JetStream, and Actor business state lives in worker memory. Disconnections do not buffer or replay business requests. Admission can resume after reconnect verification, without automatic takeover of unreachable Actors or resumption of old streams.
+- **Transport and durable state:** business messages are not stored in JetStream, and Actor business state lives in provider memory. Disconnections do not buffer or replay business requests. Admission can resume after reconnect verification, without automatic takeover of unreachable Actors or resumption of old streams.
 - **Streaming and consumption acknowledgement:** actorx-dist implements Stream sequence, termination and window rules. Credit returns over Core NATS; business streams do not use JetStream consumer ACKs or flow control.
 
 Remote providers/consumers communicate with a Gateway over HTTP/SSE; its internal actorx-dist Runtime uses the NATS paths above. See [activation and business paths](architecture.md#activation-and-business-paths) for the full sequence and [call semantics](runtime.md) for completion, cancellation and unknown outcomes.

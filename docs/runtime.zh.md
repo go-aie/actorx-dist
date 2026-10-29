@@ -109,7 +109,7 @@ Stream 使用上述五秒默认、六十秒最长总期限，长订阅须显式�
 
 ## 契约与容量
 
-调用方和工作进程使用稳定包路径的共享 DTO，消息、结果/chunk 的具名 Go 类型身份、schema 和模式都必须匹配；同一 Type 的完整契约不可变，新增 handler 也须用新 Type，见[契约升级](deployment.zh.md#契约升级)。嵌套 Addr 自动关联接收 Runtime。
+调用方和提供方使用稳定包路径的共享 DTO，消息、结果/chunk 的具名 Go 类型身份、schema 和模式都必须匹配；同一 Type 的完整契约不可变，新增 handler 也须用新 Type，见[契约升级](deployment.zh.md#契约升级)。嵌套 Addr 自动关联接收 Runtime。
 
 wire 使用严格 JSON 子集，单个 payload/chunk 最多64 KiB。自定义 codec、执行能力、非法数值或不支持的形状会被拒绝；完整兼容表、深度/节点/分配限制统一见 [wire 参考](contract.zh.md#schema-子集与指纹)。
 
@@ -119,7 +119,7 @@ wire 使用严格 JSON 子集，单个 payload/chunk 最多64 KiB。自定义 co
 
 ## 容量配置
 
-创建各个 worker 或调用方 Runtime 时设置容量，未填写的字段保留默认值：
+创建各个 provider 或 consumer Runtime 时设置容量，未填写的字段保留默认值：
 
 ```go
 rt, err := actorxdist.NewRuntime(ctx,

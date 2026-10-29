@@ -27,7 +27,7 @@ Startup and later registration use the same Runtime method:
 
 ```go
 rt, err := actorxdist.NewRuntime(ctx)
-// Check err and arrange Runtime.Close before registering worker types.
+// Check err and arrange Runtime.Close before registering Actor types.
 registration, err := rt.Register(ctx, CounterSpec)
 // Check err before opening application admission.
 
@@ -109,7 +109,7 @@ Streams share the five-second default and sixty-second maximum total deadline; c
 
 ## Contracts and capacity
 
-Callers and workers use shared DTOs at stable package paths. Named Go identities, schemas and modes must match for messages and results/chunks. One Type has an immutable complete contract; adding a handler requires a new Type. See [contract upgrades](deployment.md#contract-upgrades). Nested Addr values automatically bind the receiving Runtime.
+Consumers and providers use shared DTOs at stable package paths. Named Go identities, schemas and modes must match for messages and results/chunks. One Type has an immutable complete contract; adding a handler requires a new Type. See [contract upgrades](deployment.md#contract-upgrades). Nested Addr values automatically bind the receiving Runtime.
 
 Wire values use a strict JSON subset with a 64 KiB limit per payload/chunk. Custom codecs, execution capabilities, invalid numbers and unsupported shapes fail. The [wire reference](contract.md#schema-subset-and-fingerprint) owns the complete compatibility table and depth/node/allocation limits.
 
@@ -119,7 +119,7 @@ New activations use a Core NATS queue group to choose one Runtime. That Runtime 
 
 ## Resource configuration
 
-Set limits when creating each worker or caller Runtime; omitted fields retain the defaults:
+Set limits when creating each provider or consumer Runtime; omitted fields retain the defaults:
 
 ```go
 rt, err := actorxdist.NewRuntime(ctx,

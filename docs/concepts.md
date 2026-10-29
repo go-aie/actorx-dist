@@ -7,7 +7,7 @@ Distinguish three things: **the logical object's identity, its current activatio
 ```text
 ActorKey (Type + ID, unchanged across generations)
     └─ generation (one activation, never reused after exit)
-           └─ Actor instance in a worker (memory state and resources)
+           └─ Actor instance in a provider (memory state and resources)
 Addr binds once; obtain a fresh Addr to select another generation.
 ```
 
@@ -17,7 +17,7 @@ For example, a first call to `counter / orders-42` activates a generation and it
 
 ## Declaration and startup
 
-Workers declare creation capability with `rt.Register(ctx, spec)`. ActorSpec[T] supplies Type and New; T is a concrete struct pointer implementing actorx.Actor. Pure callers omit registration. Runtime owns the connection, local instances and management work. Successful NewRuntime means execution, connection and storage are ready. Register makes one Type's contract and activation routes ready without constructing business objects. Startup and later registration use the same API. Usually discard the registration handle and let Runtime.Close withdraw registrations and join their cleanup. See [registration and withdrawal](runtime.md#registration-and-withdrawal) when a Type needs an independent lifetime.
+Providers declare creation capability with `rt.Register(ctx, spec)`. ActorSpec[T] supplies Type and New; T is a concrete struct pointer implementing actorx.Actor. Pure consumers omit registration. A provider can also call other Actors; the same Runtime can serve both responsibilities. Runtime owns the connection, local instances and management work. Successful NewRuntime means execution, connection and storage are ready. Register makes one Type's contract and activation routes ready without constructing business objects. Startup and later registration use the same API. Usually discard the registration handle and let Runtime.Close withdraw registrations and join their cleanup. See [registration and withdrawal](runtime.md#registration-and-withdrawal) when a Type needs an independent lifetime.
 
 Only the ownership winner calls `New(ActorKey)`, returning a fresh non-nil object each time. New performs short local construction without goroutines or resources requiring cleanup; closures can capture dependencies. Put fallible checks, resource acquisition and state loading in Started, with application-defined initialization limits. Bindings must not depend on instance state; nil/live descriptions must match. Binding generation follows [actorx rules](https://github.com/go-aie/actorx/blob/main/docs/runtime.md); see [architecture](architecture.md#registration-and-context-integration) for registration and integration details.
 

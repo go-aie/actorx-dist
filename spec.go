@@ -9,7 +9,7 @@ type ActorKey struct {
 	ID   string
 }
 
-// ActorSpec declares a worker's logical type and local constructor.
+// ActorSpec declares a provider's logical type and local constructor.
 // T must be a concrete pointer to a struct implementing actorx.Actor.
 // Runtime.Register validates that restriction without invoking New.
 // Use Runtime.Register for both startup and later declarations; the returned

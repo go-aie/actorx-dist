@@ -38,29 +38,29 @@ var CounterSpec = actorxdist.ActorSpec[*Counter]{
 }
 ```
 
-`Counter` 定义业务行为，`CounterSpec` 声明类型和构造函数。工作进程注册后保持运行以处理请求，退出时由 `Runtime.Close` 统一撤销注册并等待 Actor 退出：
+`Counter` 定义业务行为，`CounterSpec` 声明类型和构造函数。Provider（提供方）注册后保持运行以处理请求，退出时由 `Runtime.Close` 统一撤销注册并等待 Actor 退出：
 
 ```go
 ctx := context.Background()
-worker, _ := actorxdist.NewRuntime(ctx)
-defer worker.Close(ctx)
-_, _ = worker.Register(ctx, CounterSpec)
+rt, _ := actorxdist.NewRuntime(ctx)
+defer rt.Close(ctx)
+_, _ = rt.Register(ctx, CounterSpec)
 ```
 
-另一个调用进程创建自己的 Runtime，无需注册 Actor，直接按类型和 ID 调用计数器：
+Consumer（调用方）在另一个进程中创建 Runtime，无需注册 Actor，直接按类型和 ID 调用计数器：
 
 ```go
-client, _ := actorxdist.NewRuntime(ctx)
-defer client.Close(ctx)
+rt, _ := actorxdist.NewRuntime(ctx)
+defer rt.Close(ctx)
 
-addr, _ := client.Addr("counter", "orders-42")
+addr, _ := rt.Addr("counter", "orders-42")
 n, _ := addr.Call[int](ctx, Add{N: 5})
 fmt.Println(n) // 新计数器输出 5
 ```
 
 `Addr("counter", "orders-42")` 只创建逻辑地址，不会启动 Actor。首次 Send、Call 或 Stream 才查找或激活实例，框架保证同一类型和 ID 的唯一归属。
 
-状态保存在工作进程内存中，实例退出后不保留。失联时没有自动接管，强制退出后的归属恢复见[部署指南](docs/deployment.zh.md#显式恢复与存储修复)。
+状态保存在提供方进程内存中，实例退出后不保留。失联时没有自动接管，强制退出后的归属恢复见[部署指南](docs/deployment.zh.md#显式恢复与存储修复)。
 
 ## 示例
 
@@ -68,7 +68,7 @@ fmt.Println(n) // 新计数器输出 5
 
 | 示例 | 学习内容 |
 | --- | --- |
-| [Counter](examples/counter/README.zh.md)（建议从这里开始） | 跨进程调用、状态保留与多 worker。 |
+| [Counter](examples/counter/README.zh.md)（建议从这里开始） | 跨进程调用、状态保留与多 provider。 |
 | [Click](examples/click/README.zh.md) | Button 调用 Counter，组合跨进程 Actor 调用。 |
 | [Chat](examples/chat/README.zh.md) | 跨进程 Stream 和慢消费时的逐段输出。 |
 

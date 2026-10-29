@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-A worker keeps the counter state; a separate client sends messages by type and business ID. Run the client again to observe retained state, or start another worker to explore unique ownership.
+A provider registers the Counter type and keeps its state; a separate consumer sends messages by type and business ID. Run the consumer again to observe retained state, or start another provider to explore unique ownership.
 
 ## Start NATS
 
@@ -14,20 +14,24 @@ In terminal 1, start NATS with the [development configuration](../nats.conf), wh
 nats-server -c examples/nats.conf -sd /tmp/dist-counter
 ```
 
-Keep this terminal running. The other distributed examples can use the same service.
+Keep this terminal running. The other distributed examples can use the same service. If you previously ran the single-entry examples, use a new development storage directory with `-sd`: moving the shared Go types into importable packages changes their contracts.
 
 ## Run Counter
 
-In terminal 2, start a worker and wait for `Counter worker ready`:
+### Provider
+
+In terminal 2, start a provider and wait for `Counter provider ready`:
 
 ```sh
-go run ./examples/counter -role worker
+go run ./examples/counter/provider
 ```
 
-In terminal 3, run the client:
+### Consumer
+
+In terminal 3, run the consumer:
 
 ```sh
-go run ./examples/counter -role client -id orders-42
+go run ./examples/counter/consumer -id orders-42
 ```
 
 For a new counter ID, the output is:
@@ -37,34 +41,37 @@ For a new counter ID, the output is:
 10
 ```
 
-The client runs two rounds, each using Send to add 2 and Call to add 3 and return the total. Run it again while the same worker is running to get 15, then 20: the counter retains its state between client runs. Send waits for mailbox admission; Call returns the accumulated business result.
+The consumer runs two rounds, each using Send to add 2 and Call to add 3 and return the total. Run it again while the same provider is running to get 15, then 20: the counter retains its state between consumer runs. Send waits for mailbox admission; Call returns the accumulated business result.
 
-## Multiple workers and IDs
+## Multiple providers and IDs
 
-Keep the original worker running and start a second worker in another terminal, sharing the same type and NATS account:
-
-```sh
-go run ./examples/counter -role worker
-```
-
-In the client terminal, use a different ID:
+Keep the original provider running and start a second provider in another terminal, sharing the same type and NATS account:
 
 ```sh
-go run ./examples/counter -role client -id another
+go run ./examples/counter/provider
 ```
 
-For a new ID, this prints 5, then 10. Different IDs have independent state. Conditional KV ownership selects one worker for each key; a new ID may belong to either worker. Calling `orders-42` again continues its existing count on the original owner.
+In the consumer terminal, use a different ID:
+
+```sh
+go run ./examples/counter/consumer -id another
+```
+
+For a new ID, this prints 5, then 10. Different IDs have independent state. Conditional KV ownership selects one provider for each key; a new ID may belong to either provider. Calling `orders-42` again continues its existing count on the original owner.
 
 ## Shut down
 
-The client exits automatically without stopping the counter. To finish, press Ctrl-C in each worker terminal and wait for its Runtime and owned actors to exit, then press Ctrl-C in terminal 1 to stop NATS.
+The consumer exits automatically without stopping the counter. To finish, press Ctrl-C in each provider terminal and wait for its Runtime and owned actors to exit, then press Ctrl-C in terminal 1 to stop NATS.
 
-State lives in worker memory and disappears on instance exit. Unreachable owners are not replaced automatically; see [explicit recovery](../../docs/deployment.md#explicit-recovery-and-storage-repair) after forced exit.
+State lives in provider memory and disappears on instance exit. Unreachable owners are not replaced automatically; see [explicit recovery](../../docs/deployment.md#explicit-recovery-and-storage-repair) after forced exit.
 
 ## How it works
 
-[actors.go](actors.go) defines Add, Counter and CounterSpec; [main.go](main.go) handles flags, Runtime lifetime and two process roles: worker registers `rt.Register(ctx, CounterSpec)` and waits for shutdown; client registers no Actors and calls the remote Counter. The default role is client. All processes can use `-nats nats://SERVER:4222` to connect to the same service.
+[actors.go](actors.go) defines the shared `counter` package: Add, Counter and CounterSpec. The two programs import this package and own their Runtime lifetimes independently:
 
-CounterSpec stays beside Counter; bindings are generated with `go generate ./examples/counter`. The client role still links this program's Actor definitions. Remote Stop/Wait is covered in [lifecycle](../../docs/lifecycle.md); continue with [Click](../click/README.md) for cross-process composition.
+- [provider/main.go](provider/main.go) creates a Runtime, registers `counter.CounterSpec` and waits for shutdown.
+- [consumer/main.go](consumer/main.go) creates a Runtime, obtains the address and sends Add messages without registering Actors.
+
+Both accept `-nats nats://SERVER:4222`. Generate bindings with `go generate ./examples/counter`. The consumer also links the shared Actor definitions. Remote Stop/Wait is covered in [lifecycle](../../docs/lifecycle.md); continue with [Click](../click/README.md) for cross-process composition.
 
 For the same counting behavior with a Python provider and HTTP consumer, see [Remote Counter](../../remote/examples/counter/README.md).

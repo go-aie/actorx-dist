@@ -12,7 +12,7 @@ Request completion and object exit are separate boundaries. [Call semantics](run
 | Exclusive temporary object | Retain the original Addr, Stop → Wait with an independent cleanup deadline, then close the caller Runtime |
 | Collaborating Actors | Addresses and calls do not propagate stop; the application ends exclusive dependencies explicitly |
 | Type withdrawal | Registration.Unregister closes that registration's creation capability and stops/joins its logical instances; see [registration](runtime.md#registration-and-withdrawal) |
-| Owning worker exit | Runtime.Close joins all owned generations, including retained failed activations and local children |
+| Owning provider exit | Runtime.Close joins all owned generations, including retained failed activations and local children |
 
 Dropping Addr, ending a call, closing its caller or stopping its initiating Actor leaves remote objects alive. Communicating after omitting ID addresses a new object; there is no idle collection. Self provides neither automatic unsubscribe nor cascading stop.
 

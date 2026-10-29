@@ -35,7 +35,7 @@ Run `nats-server -c nats.conf`. Runtime defaults to `nats://127.0.0.1:4222`; ove
 ```go
 rt, err := actorxdist.NewRuntime(ctx,
     actorxdist.WithNATS("nats://127.0.0.1:4222", nats.UserInfo("dev", "change-me")),
-    // After creation, register worker types with rt.Register(ctx, spec).
+    // After creation, register Actor types with rt.Register(ctx, spec).
 )
 ```
 
@@ -51,13 +51,13 @@ Configure per-process execution and network capacity with [WithExecutionLimits a
 
 Runtime creates three KV buckets idempotently. Incompatible existing configuration fails without automatic repair. Types use 16 MiB with 64 KiB values; current ownership and exits each use 128 MiB with 16 KiB values. All use files, History=1, no TTL, DiscardNew and one replica. See the [Registry protocol](registry.md) for complete settings and conservative evidence rules. Any complete wire contract change requires a new Type. Stored type metadata does not establish that a Factory is online.
 
-Grant JetStream account/stream information, the required KV reads and conditional writes, sequence-bounded maintenance purge, shared Factory entries, dedicated controls and temporary inboxes separately. `actorxdist.default.factory.<type-token>.<factory-token>.control.confirm` and `.control.stop` are distinct publish permissions. The receiver subscribes normally to `control.*`, without a queue group. Scope permissions to actual Type/token ranges. Send/Call/Stream callers publish to `actorxdist.default.actor.<type-token>.<id-token>`; workers subscribe under their declared Types. Both publish replies and subscribe to their own `_INBOX.>`. Call/Stream cancellation uses the original business subject without additional subscriptions or control permissions.
+Grant JetStream account/stream information, the required KV reads and conditional writes, sequence-bounded maintenance purge, shared Factory entries, dedicated controls and temporary inboxes separately. `actorxdist.default.factory.<type-token>.<factory-token>.control.confirm` and `.control.stop` are distinct publish permissions. The receiver subscribes normally to `control.*`, without a queue group. Scope permissions to actual Type/token ranges. Send/Call/Stream callers publish to `actorxdist.default.actor.<type-token>.<id-token>`; providers subscribe under their declared Types. Both publish replies and subscribe to their own `_INBOX.>`. Call/Stream cancellation uses the original business subject without additional subscriptions or control permissions.
 
 Exact connection and reserved control limits live in the [wire resource table](contract.md#time-and-development-resource-profile).
 
 Disconnect suspends new network admission. Reconnect preserves factory-token and verifies buckets, contracts, held ownership and subscription Flush before resuming. Restart generates a new token without inheriting old ownership. There is no automatic takeover or business replay. `rt.Diagnostics()` drains up to 64 bounded events without blocking, returning the cumulative overflow count. SDK asynchronous errors, dispatch overflow and maintenance failures are observable without invoking user logic on SDK callbacks.
 
-Worker Runtimes perform bounded maintenance of released metadata. Exits retain 24 hours plus a 500 ms guard; PREPARED/FAILED_HELD never age out. See the [Registry algorithm](registry.md#conditional-cleanup-and-physical-reclamation) for guarded deletion and physical reclamation.
+Provider Runtimes perform bounded maintenance of released metadata. Exits retain 24 hours plus a 500 ms guard; PREPARED/FAILED_HELD never age out. See the [Registry algorithm](registry.md#conditional-cleanup-and-physical-reclamation) for guarded deletion and physical reclamation.
 
 Stream consumption acknowledgements publish to the owner inbox advertised in chunks. Both sides need the corresponding `_INBOX.>` publish permission. Two Runtime inboxes serve all calls and streams without per-stream subscriptions.
 
@@ -90,16 +90,16 @@ For capacity incidents, pause new activations and inspect bucket/account usage a
 
 ## Contract upgrades
 
-The complete contract includes all ordinary messages, their package-qualified Go identities, schemas, results and modes. Registration reads nil-receiver Bindings without calling New or Started. Every worker for the same Type must match exactly; adding a handler is incompatible even when existing messages are unchanged. The registry retains the contract after workers and instances exit.
+The complete contract includes all ordinary messages, their package-qualified Go identities, schemas, results and modes. Registration reads nil-receiver Bindings without calling New or Started. Every provider for the same Type must match exactly; adding a handler is incompatible even when existing messages are unchanged. The registry retains the contract after providers and instances exit.
 
-For an implementation-only rolling update with an identical complete contract, start the new worker, wait for its ready log, then gracefully Close the old worker. Existing generations remain with the original owner until full exit; the new process does not inherit them. A fresh Addr can select the next generation. No state transfer is implied.
+For an implementation-only rolling update with an identical complete contract, start the new provider, wait for its ready log, then gracefully Close the old provider. Existing generations remain with the original owner until full exit; the new process does not inherit them. A fresh Addr can select the next generation. No state transfer is implied.
 
-For changed contracts, declare a new stable Type, such as example.counter.v2. Keep the old shared DTO package when its identity and schema are unchanged; use a distinct package or named type for changed DTOs. Deploy old and new Types together, direct upgraded callers to the new Type, then explicitly retire old owned objects and Close old workers after their clients drain. The same ID under different Types represents independent state. Preserve old terminal metadata for its retention period. Do not rewrite stored Type records or use deleting storage as an upgrade strategy.
+For changed contracts, declare a new stable Type, such as example.counter.v2. Keep the old shared DTO package when its identity and schema are unchanged; use a distinct package or named type for changed DTOs. Deploy old and new Types together, direct upgraded callers to the new Type, then explicitly retire old owned objects and Close old providers after their consumers drain. The same ID under different Types represents independent state. Preserve old terminal metadata for its retention period. Do not rewrite stored Type records or use deleting storage as an upgrade strategy.
 
-## Multiple workers and machines
+## Multiple providers and machines
 
 See [Counter](../examples/counter/README.md), [Click](../examples/click/README.md) and [Chat](../examples/chat/README.md) for local process setup against one service/account.
 
-For actual separate hosts, provision the same pinned NATS service in a reachable network and bind its client listener to the intended interface instead of 127.0.0.1. Configure firewall access, authentication, TLS and the permissions above. Use a durable writable server storage directory and synchronized host clocks (±250 ms). Build the same worker/client code for each host; pass -nats with the reachable URL to every process. Start workers on worker hosts, wait for readiness and run the corresponding client roles from a caller host. Check outputs and repeated same-key accumulation as documented in each example. With the optional external-consumer tools retained, also start their fixture workers and use `consumer.py source --clients-only --nats <service-URL>` from the caller host for the complete consumer suite.
+For actual separate hosts, provision the same pinned NATS service in a reachable network and bind its client listener to the intended interface instead of 127.0.0.1. Configure firewall access, authentication, TLS and the permissions above. Use a durable writable server storage directory and synchronized host clocks (±250 ms). Build the same provider/consumer code for each host; pass -nats with the reachable URL to every process. Start providers on provider hosts, wait for readiness and run the corresponding consumer programs from a caller host. Check outputs and repeated same-key accumulation as documented in each example. With the optional external-consumer tools retained, also start their fixture providers and use `consumer.py source --consumers-only --nats <service-URL>` from the caller host for the complete consumer suite.
 
 Record server configuration, host identities, versions, selected manifests, readiness and outputs. Source mode remains source evidence regardless of host count. A single server with Replicas=1 provides no replicated storage or automatic failover guarantee. Physical cross-host networking and replication remain unverified.
