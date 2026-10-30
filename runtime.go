@@ -57,7 +57,8 @@ type Runtime struct {
 	net      *network
 
 	// Tests may install an internal adapter; production always uses NATS.
-	invoke func(context.Context, Addr, actorx.Kind, any, reflect.Type, func(any) error) (any, error)
+	invoke     func(context.Context, Addr, actorx.Kind, any, reflect.Type) (any, error)
+	openStream func(context.Context, Addr, any, reflect.Type) (*receiveStream, error)
 }
 
 // NewRuntime initializes execution, connection and Registry resources.
@@ -148,6 +149,7 @@ func NewRuntime(initCtx context.Context, options ...Option) (*Runtime, error) {
 	}
 	if err == nil && rt.net != nil {
 		rt.invoke = rt.net.invokeBusiness
+		rt.openStream = rt.net.openStream
 	}
 	if err == nil {
 		err = initCtx.Err()

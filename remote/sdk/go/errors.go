@@ -18,6 +18,8 @@ func (e category) Error() string { return "actorxremote: " + string(e) }
 // Error categories support errors.Is. Details are available through errors.As
 // with *RemoteError or *TransportError. Remote diagnostics are never echoed.
 var (
+	// ErrStreamUsed is a local usage error; it has no wire RPC code.
+	ErrStreamUsed           error = category("stream_used")
 	ErrUnsupportedOperation error = category("unsupported_operation")
 	ErrOutcomeUnknown       error = category("outcome_unknown")
 	ErrActivationUnknown    error = category("activation_unknown")

@@ -27,7 +27,7 @@ func TestAddrValueSnapshotsAndStrictDecoding(t *testing.T) {
 	if _, err := zero.Call[int](ctx, read{}); !errors.Is(err, actorx.ErrSetup) {
 		t.Fatal(err)
 	}
-	if err := zero.Stream[int](ctx, series{}, func(int) error { return nil }); !errors.Is(err, actorx.ErrSetup) {
+	if err := streamError(zero.Stream[int](ctx, series{})); !errors.Is(err, actorx.ErrSetup) {
 		t.Fatal(err)
 	}
 

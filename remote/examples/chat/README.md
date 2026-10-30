@@ -67,7 +67,7 @@ The consumer calls once, then streams an answer from the same Actor. The provide
 
 [Go provider](go/provider/main.go) implements `Actor.Handle` and `StreamActor.HandleStream`, using `StreamWriter.Write`; [Python provider](python/provider.py) implements `handle` and the asynchronous generator `handle_stream`. Both methods share the turns field and instance lock. No model service is needed.
 
-[Go consumer](go/consumer/main.go) uses `Next/Value/Err` with deferred Close; [Python consumer](python/consumer.py) uses an async context and async for. Both close the stream when finished.
+[Go consumer](go/consumer/main.go) uses `for chunk, err := range actor.Stream(ctx, message)` with automatic cleanup on loop exit; [Python consumer](python/consumer.py) uses an async context and async for. Both close the stream when finished.
 
 This demonstrates local source use. The Go local replace does not prove released-package consumption; providers do not reconnect automatically. Use matching gateway and SDK `actorx.remote/v1` implementations. If an old Call-only Type contract exists, choose a new Type for both roles rather than clearing a shared Registry; see [Protocol and Type migration](../../docs/runtime.md#protocol-and-type-migration).
 

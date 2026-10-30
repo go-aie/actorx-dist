@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"iter"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-aie/actorx"
@@ -12,117 +15,155 @@ import (
 	"github.com/go-aie/actorx-dist/remote/protocol"
 )
 
-// Stream shares the Call proxy and retains selected identity on error.
-// yield's return acknowledges consumption of one chunk; it must honor ctx.
-func (g *Gateway) Stream(
-	ctx context.Context,
-	request protocol.CallParams,
-	yield func(protocol.Address, json.RawMessage) error,
-) (protocol.StreamResult, error) {
-	response := protocol.StreamResult{Address: request.Address}
-	if g == nil || ctx == nil || yield == nil {
-		return response, actorx.ErrSetup
-	}
-	if request.Address.Validate(false) != nil || protocol.ValidateJSON(request.Input) != nil {
-		return response, protocol.NewError(protocol.InvalidParams, "Invalid stream", nil)
-	}
-	if _, err := protocol.NewRequest(protocol.Stream, "validation", request); err != nil {
-		return response, protocol.NewError(protocol.InvalidParams, "Stream exceeds message limit", nil)
-	}
-
-	limit := 5 * time.Second
-	if request.DeadlineUnixMS != nil {
-		limit = 60 * time.Second
-	}
-	ctx, cancel := callBudget(ctx, request.DeadlineUnixMS, limit)
-	defer cancel()
-	if err := ctx.Err(); err != nil {
-		return response, mapError(err, addressEvidence(response.Address))
-	}
-	id, err := opaque()
-	if err != nil {
-		return response, err
-	}
-
-	// Call and Stream share admission; registration shutdown joins both.
-	g.mu.Lock()
-	if g.closed {
-		g.mu.Unlock()
-		return response, mapError(actorx.ErrClosed, addressEvidence(response.Address))
-	}
-	r := g.registrations[request.Address.Type]
-	if r == nil || !r.ready {
-		g.mu.Unlock()
-		return response, protocol.NewError(protocol.ActorUnavailable, "Actor unavailable", addressEvidence(response.Address))
-	}
-	if g.active >= protocol.Capacity {
-		g.mu.Unlock()
-		return response, mapError(actorx.ErrFull, addressEvidence(response.Address))
-	}
-	g.active++
-	r.calls.Add(1)
-	r.session.track(id)
-	g.mu.Unlock()
-
-	defer func() {
-		r.session.forget(id)
-		g.mu.Lock()
-		g.active--
-		g.mu.Unlock()
-		r.calls.Done()
-	}()
-
-	input := protocol.InvokeStream{
-		RequestID:   id,
-		MessageType: "json",
-		ContentType: "application/json",
-		Content:     string(request.Input),
-	}
-	address, err := g.backend.stream(ctx, request.Address, input, func(a protocol.Address, c protocol.Chunk) error {
-		if a.Validate(true) != nil || c.Validate() != nil {
-			return actorxdist.ErrProtocol
-		}
-		response.Address = a
-		response.FinalSeq++
-		return yield(a, json.RawMessage(c.Content))
-	})
-	response.Address = address
-
-	// Confirmed provider evidence takes precedence over later transport errors.
-	evidence := r.session.settle(id, address)
-	if evidence.terminal {
-		if evidence.err != nil {
-			return response, mapError(evidence.err, addressEvidence(address))
-		}
-		if evidence.result.Failure != nil {
-			return response, protocol.NewError(evidence.result.Failure.Code, evidence.result.Failure.Message, addressEvidence(address))
-		}
-	} else if evidence.sent {
-		return response, protocol.NewError(protocol.OutcomeUnknown, "Provider outcome is unknown", addressEvidence(address))
-	}
-	if err != nil {
-		return response, mapError(err, addressEvidence(address))
-	}
-	return response, nil
+// StreamChunk retains the selected generation alongside the JSON value.
+type StreamChunk struct {
+	Address protocol.Address
+	Value   json.RawMessage
 }
 
-// ConsumerStream correlates an HTTP-independent consumer segment. Run owns its
+// Stream starts on first iteration and may be consumed once. A normal loop body
+// acknowledges its chunk. Early exit cancels only this request.
+func (g *Gateway) Stream(ctx context.Context, request protocol.CallParams) iter.Seq2[StreamChunk, error] {
+	var used atomic.Bool
+
+	return func(yield func(StreamChunk, error) bool) {
+		if !used.CompareAndSwap(false, true) {
+			yield(StreamChunk{}, actorx.ErrSetup)
+			return
+		}
+		result := protocol.StreamResult{Address: request.Address}
+		g.stream(ctx, request, &result)(yield)
+	}
+}
+
+// stream is the single consumption path shared by the public iterator and HTTP.
+// result also carries generation evidence for empty and failed streams.
+func (g *Gateway) stream(ctx context.Context, request protocol.CallParams, result *protocol.StreamResult) iter.Seq2[StreamChunk, error] {
+	return func(yield func(StreamChunk, error) bool) {
+		fail := func(err error) { yield(StreamChunk{}, err) }
+		if g == nil || ctx == nil {
+			fail(actorx.ErrSetup)
+			return
+		}
+		if request.Address.Validate(false) != nil || protocol.ValidateJSON(request.Input) != nil {
+			fail(protocol.NewError(protocol.InvalidParams, "Invalid stream", nil))
+			return
+		}
+		if _, err := protocol.NewRequest(protocol.Stream, "validation", request); err != nil {
+			fail(protocol.NewError(protocol.InvalidParams, "Stream exceeds message limit", nil))
+			return
+		}
+
+		limit := 5 * time.Second
+		if request.DeadlineUnixMS != nil {
+			limit = 60 * time.Second
+		}
+		ctx, cancel := callBudget(ctx, request.DeadlineUnixMS, limit)
+		defer cancel()
+		if err := ctx.Err(); err != nil {
+			fail(mapError(err, addressEvidence(result.Address)))
+			return
+		}
+
+		id, err := opaque()
+		if err != nil {
+			fail(err)
+			return
+		}
+
+		g.mu.Lock()
+		r := g.registrations[request.Address.Type]
+		switch {
+		case g.closed:
+			err = actorx.ErrClosed
+		case r == nil || !r.ready:
+			err = actorxdist.ErrTypeUnavailable
+		case g.active >= protocol.Capacity:
+			err = actorx.ErrFull
+		}
+		if err != nil {
+			g.mu.Unlock()
+			fail(mapError(err, addressEvidence(result.Address)))
+			return
+		}
+		g.active++
+		r.calls.Add(1)
+		r.session.track(id)
+		g.mu.Unlock()
+
+		closeScope := sync.OnceFunc(func() {
+			cancel()
+			r.session.forget(id)
+			g.mu.Lock()
+			g.active--
+			g.mu.Unlock()
+			r.calls.Done()
+		})
+		defer closeScope()
+
+		input := protocol.InvokeStream{
+			RequestID:   id,
+			MessageType: "json",
+			ContentType: "application/json",
+			Content:     string(request.Input),
+		}
+		var streamErr error
+		for c, err := range g.backend.stream(ctx, &result.Address, input) {
+			if err != nil {
+				streamErr = err
+				break
+			}
+			if result.Address.Validate(true) != nil || c.Validate() != nil {
+				streamErr = actorxdist.ErrProtocol
+				break
+			}
+			if !yield(StreamChunk{Address: result.Address, Value: json.RawMessage(c.Content)}, nil) {
+				return
+			}
+			result.FinalSeq++
+		}
+
+		// A valid provider terminal cannot erase a failed local delivery or
+		// canceled drain. Business failure evidence is restored only on its path.
+		// Empty terminals have no pending delivery to cancel.
+		evidence := r.session.settle(id, result.Address)
+		if evidence.terminal && evidence.err != nil {
+			streamErr = evidence.err
+		} else if evidence.terminal && evidence.result.Failure != nil &&
+			result.FinalSeq == evidence.finalSeq &&
+			(evidence.finalSeq == 0 || ctx.Err() == nil) &&
+			!errors.Is(streamErr, actorxdist.ErrProtocol) && !errors.Is(streamErr, actorxdist.ErrOutcomeUnknown) {
+			streamErr = protocol.NewError(evidence.result.Failure.Code, evidence.result.Failure.Message, addressEvidence(result.Address))
+		} else if !evidence.terminal && evidence.sent {
+			streamErr = actorxdist.ErrOutcomeUnknown
+		}
+
+		closeScope()
+		if streamErr != nil {
+			fail(mapStreamError(streamErr, result.Address))
+		}
+	}
+}
+
+// ConsumerStream correlates an HTTP-independent consumer segment. Messages owns its
 // lifetime; Close requests cancellation without stopping the shared Actor.
 type ConsumerStream struct {
-	gateway  *Gateway
-	request  protocol.CallParams
-	id       json.RawMessage
-	token    string
-	ctx      context.Context
-	cancel   context.CancelFunc
-	mu       sync.Mutex
-	seq, ack uint64
-	terminal bool
-	wake     chan struct{}
+	gateway   *Gateway
+	request   protocol.CallParams
+	id        json.RawMessage
+	token     string
+	ctx       context.Context
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	seq, ack  uint64
+	terminal  bool
+	used      atomic.Bool
+	closeOnce sync.Once
+	wake      chan struct{}
 }
 
 // OpenStream validates a consumer request and reserves its correlation token.
-// The caller sends Open before Run and closes the stream on transport exit.
+// The caller sends Open before Messages and closes the stream on transport exit.
 func (g *Gateway) OpenStream(ctx context.Context, id json.RawMessage, request protocol.CallParams) (*ConsumerStream, error) {
 	if g == nil || ctx == nil || len(id) == 0 {
 		return nil, actorx.ErrSetup
@@ -190,58 +231,80 @@ func (s *ConsumerStream) Open() protocol.Message {
 
 // Close cancels this segment and releases its gateway entry. It is idempotent.
 func (s *ConsumerStream) Close() {
-	s.cancel()
-	s.gateway.mu.Lock()
-	delete(s.gateway.consumerStreams, s.token)
-	s.gateway.mu.Unlock()
+	s.closeOnce.Do(func() {
+		s.cancel()
+		s.gateway.mu.Lock()
+		delete(s.gateway.consumerStreams, s.token)
+		s.gateway.mu.Unlock()
+	})
 }
 
-// Run writes chunks and returns the terminal response after consumption settles.
-// write must honor the context supplied to OpenStream.
-func (s *ConsumerStream) Run(write func(protocol.Message) error) protocol.Message {
-	defer s.Close()
-	result, err := s.gateway.Stream(s.ctx, s.request, func(a protocol.Address, value json.RawMessage) error {
+// Messages yields HTTP chunks and the final wire response. The transport must
+// stop iteration on a failed write. Only a correlated client ACK completes the
+// upstream loop body; SSE flush alone does not acknowledge consumption.
+func (s *ConsumerStream) Messages() iter.Seq[protocol.Message] {
+	return func(yield func(protocol.Message) bool) {
+		if !s.used.CompareAndSwap(false, true) {
+			return
+		}
+		defer s.Close()
+
+		result := protocol.StreamResult{Address: s.request.Address}
+		var streamErr error
+		for chunk, err := range s.gateway.stream(s.ctx, s.request, &result) {
+			if err != nil {
+				streamErr = err
+				break
+			}
+			s.mu.Lock()
+			s.seq++
+			seq := s.seq
+			s.mu.Unlock()
+			m := protocol.Notification(protocol.ChunkMethod, protocol.ChunkParams{
+				RequestID:   s.id,
+				StreamToken: s.token,
+				Address:     chunk.Address,
+				Seq:         seq,
+				Value:       chunk.Value,
+			})
+			if !yield(m) {
+				return
+			}
+
+			// Keep the upstream body active until the client confirms consumption.
+			for {
+				s.mu.Lock()
+				ack := s.ack
+				s.mu.Unlock()
+				if err := s.ctx.Err(); err != nil {
+					streamErr = err
+					break
+				}
+				if ack >= seq {
+					break
+				}
+				select {
+				case <-s.wake:
+				case <-s.ctx.Done():
+				}
+			}
+			if streamErr != nil {
+				break
+			}
+		}
+
 		s.mu.Lock()
-		s.seq++
+		s.terminal = true
 		seq := s.seq
 		s.mu.Unlock()
-		m := protocol.Notification(protocol.ChunkMethod, protocol.ChunkParams{
-			RequestID:   s.id,
-			StreamToken: s.token,
-			Address:     a,
-			Seq:         seq,
-			Value:       value,
-		})
-		if err := write(m); err != nil {
-			return err
+		result.FinalSeq = seq
+		s.Close()
+		if streamErr != nil {
+			yield(protocol.ErrorResponse(s.id, protocol.StreamError(mapStreamError(streamErr, result.Address), seq)))
+		} else {
+			yield(protocol.Success(s.id, result))
 		}
-
-		// Flushing SSE is delivery only. Wait for consumer credit before
-		// acknowledging this chunk to the native stream and the provider.
-		for {
-			s.mu.Lock()
-			ack := s.ack
-			s.mu.Unlock()
-			if ack >= seq {
-				return nil
-			}
-			select {
-			case <-s.wake:
-			case <-s.ctx.Done():
-				return s.ctx.Err()
-			}
-		}
-	})
-
-	s.mu.Lock()
-	s.terminal = true
-	seq := s.seq
-	s.mu.Unlock()
-	result.FinalSeq = seq
-	if err != nil {
-		return protocol.ErrorResponse(s.id, protocol.StreamError(mapStreamError(err, result.Address), seq))
 	}
-	return protocol.Success(s.id, result)
 }
 
 func mapStreamError(err error, a protocol.Address) *protocol.Error {

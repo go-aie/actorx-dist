@@ -137,9 +137,11 @@ func TestProviderStreamSharesCallStateAndRetainsCredits(t *testing.T) {
 	g.cancelStream(id) // late cancellation cannot rewrite success
 	g.credit(id, 1)
 	waitValue(t, ledger.removed)
+
 	if err := ledger.Write("after-return"); err == nil {
 		t.Fatal("writer survived return")
 	}
+
 	call = g.send("actor/call", selected, nil, time.Now().Add(time.Second))
 	if providerValue(t, g.response(call)) != json.Number("3") {
 		t.Fatal("stream poisoned shared object")
@@ -687,4 +689,57 @@ func TestProviderStreamCancelWakesWindowWait(t *testing.T) {
 		t.Fatal(m)
 	}
 	g.join(id, selected.Type)
+}
+
+func TestProviderStreamFailureRetainsCreditsUntilACK(t *testing.T) {
+	r, g := newProviderGateway(t)
+	registerStream(t, r, g, &actorMethods{
+		call: func(context.Context, any) (any, error) { return "still usable", nil },
+		stream: func(_ context.Context, _ any, w StreamWriter) error {
+			for i := 0; i < 3; i++ {
+				if err := w.Write(i); err != nil {
+					return err
+				}
+			}
+			return errors.New("business failure")
+		},
+	})
+	id := g.sendStream(selected, nil, time.Now().Add(time.Second))
+	for i := uint64(1); i <= 3; i++ {
+		f := chunkFields(t, waitValue(t, g.responses))
+		seq, err := wire.Sequence(f["seq"])
+		if err != nil || seq != i {
+			t.Fatal(seq, err)
+		}
+	}
+	m := g.response(id)
+	assertProviderCode(t, m, 1000)
+	if finalSequence(t, m) != 3 {
+		t.Fatal(m)
+	}
+	g.join(id, selected.Type)
+	p := g.registration(selected.Type)
+	key, _ := wire.IDKey(id)
+	p.mu.Lock()
+	ledger := p.streams[key]
+	p.mu.Unlock()
+	if ledger == nil {
+		t.Fatal("failure terminal discarded unacknowledged data")
+	}
+	// Provider failure frees execution ownership, independently of receipts.
+	call := g.send("actor/call", selected, nil, time.Now().Add(time.Second))
+	if value := providerValue(t, g.response(call)); value != "still usable" {
+		t.Fatal(value)
+	}
+	g.credit(id, 3)
+	waitValue(t, ledger.removed)
+
+	if err := ledger.Write("after failure"); err == nil {
+		t.Fatal("failed writer survived handler return")
+	}
+	select {
+	case m := <-g.responses:
+		t.Fatal("second terminal or late output", m)
+	default:
+	}
 }

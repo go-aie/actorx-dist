@@ -67,7 +67,7 @@ consumer 先 Call，再通过同一 Actor 流式获取回答。provider 输出 `
 
 [Go provider](go/provider/main.go) 同时实现 `Actor.Handle` 与 `StreamActor.HandleStream`，后者调用 `StreamWriter.Write`；[Python provider](python/provider.py) 实现 `handle` 与异步生成器 `handle_stream`。两种方法共享 `turns` 字段和实例锁。无需模型服务。
 
-[Go consumer](go/consumer/main.go) 使用 `Next/Value/Err` 并 defer Close；[Python consumer](python/consumer.py) 使用 async context 和 async for。两种语言都在结束时关闭流。
+[Go consumer](go/consumer/main.go) 使用 `for chunk, err := range actor.Stream(ctx, message)`，退出循环时自动清理；[Python consumer](python/consumer.py) 使用 async context 和 async for。两种语言都在结束时关闭流。
 
 这是本机源码示例。Go 示例的本地 replace 不是发行包证据；provider 不自动重连。gateway 与两种 SDK 配套使用 `actorx.remote/v1`。如已有旧 Call-only Type 契约，为两端同时选择新 Type，不清理共享 Registry；详见[协议与 Type 迁移](../../docs/runtime.zh.md#协议与-type-迁移)。
 

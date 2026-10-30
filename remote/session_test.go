@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"reflect"
 	"strconv"
 	"sync"
@@ -33,7 +34,7 @@ func TestSessionRequestIDsFollowQueueOrder(t *testing.T) {
 				case 1:
 					_, err = s.invoke(ctx, a, input(id))
 				case 2:
-					err = s.invokeStream(ctx, a, protocol.InvokeStream(input(id)), func(protocol.Chunk) error { return nil })
+					err = streamError(s.invokeStream(ctx, a, protocol.InvokeStream(input(id))))
 				}
 				done <- err
 			}()
@@ -79,7 +80,7 @@ func TestSessionRequestSequenceExhaustionDoesNotDispatch(t *testing.T) {
 	for _, method := range []string{protocol.Create, protocol.Call, protocol.Stream} {
 		var err error
 		if method == protocol.Stream {
-			err = s.invokeStream(ctx, a, protocol.InvokeStream(input("counter")), func(protocol.Chunk) error { return nil })
+			err = streamError(s.invokeStream(ctx, a, protocol.InvokeStream(input("counter"))))
 		} else {
 			_, err = s.exchange(ctx, method, a, "counter", json.RawMessage(`null`))
 		}
@@ -333,8 +334,8 @@ func TestProviderRefusalsKeepClassification(t *testing.T) {
 					}
 					return a, result, err
 				}
-				g.backend.stream = func(ctx context.Context, a protocol.Address, in protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
-					return a, r.session.invokeStream(ctx, a, in, func(c protocol.Chunk) error { return yield(a, c) })
+				g.backend.stream = func(ctx context.Context, a *protocol.Address, in protocol.InvokeStream) iter.Seq2[protocol.Chunk, error] {
+					return r.session.invokeStream(ctx, *a, in)
 				}
 				a := testAddress("refused")
 				done := make(chan error, 1)
@@ -345,11 +346,15 @@ func TestProviderRefusalsKeepClassification(t *testing.T) {
 						_, err := g.Call(ctx, request)
 						done <- err
 					} else {
-						_, err := g.Stream(ctx, request, func(protocol.Address, json.RawMessage) error {
+						var result error
+						for _, err := range g.Stream(ctx, request) {
+							if err != nil {
+								result = err
+								break
+							}
 							t.Error("refusal delivered a chunk")
-							return nil
-						})
-						done <- err
+						}
+						done <- result
 					}
 				}()
 				m := await(t, r.Events())

@@ -72,6 +72,7 @@ class ProviderStream:
     def check_sending(self) -> None:
         if (
             self.finished
+            or self.work.cancel_requested
             or self.registration.closing
             or asyncio.get_running_loop().time() >= self.work.deadline
         ):

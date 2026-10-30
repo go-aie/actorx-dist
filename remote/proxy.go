@@ -75,9 +75,15 @@ func (a *proxyActor) InvokeStream(ctx actorx.Context, i protocol.InvokeStream, r
 	address, s := a.address, a.session
 	// Call and Stream share busy; cancellation of this task leaves the Actor alive.
 	_, err := actorx.StartTask(ctx, func(work context.Context) (struct{}, error) {
-		return struct{}{}, s.invokeStream(work, address, i, func(c protocol.Chunk) error {
-			return r.Write(work, c, len(c.Content))
-		})
+		for c, err := range s.invokeStream(work, address, i) {
+			if err != nil {
+				return struct{}{}, err
+			}
+			if err := r.Write(work, c, len(c.Content)); err != nil {
+				return struct{}{}, err
+			}
+		}
+		return struct{}{}, nil
 	}, func(_ struct{}, err error) bool {
 		a.busy = false
 		r.Complete(err)

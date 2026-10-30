@@ -35,3 +35,5 @@ Without this variable, real NATS tests are skipped. For Go/Python interoperabili
 Tag the SDK submodule with `remote/sdk/go/vX.Y.Z`. After publishing, use the actual version in an external project with `GOWORK=off` and no `replace`, then build and run a provider and consumer. The examples' `v0.0.0` and local `replace` are for source development only.
 
 Verify unit behavior, real interoperability and released-module consumption separately. Source tests do not establish that a published release works.
+
+The Stream iterator migration retains wire version `actorx.remote/v1`, but replaces the Go consumption APIs and changes valid producer-failure draining. Upgrade Gateway and both SDKs together. The example replacements prove current source consumption only; module-proxy and Python-package-index availability require separate verification. Verify the pinned actorx version with a fresh module cache and checksum validation, and repeat external builds without any replacement once the corresponding root/SDK versions have been published.

@@ -35,3 +35,5 @@ ACTORX_REMOTE_NATS_URL=nats://127.0.0.1:4222 \
 SDK 子模块使用 `remote/sdk/go/vX.Y.Z` tag。发布后，在仓库外以 `GOWORK=off`、无 `replace` 的项目依赖实际版本，编译并运行 provider/consumer。示例中的 `v0.0.0` 和本地 `replace` 仅用于源码开发。
 
 单元测试、真实互通和发行包消费分别验证；源码测试通过不代表发行包已验证。
+
+Stream 迭代器迁移保留 `actorx.remote/v1`，但破坏性替换 Go 消费 API，并改变有效生产者失败后的排空行为；Gateway 与两种 SDK 应一起升级。示例的本地 replace 只证明当前源码消费，模块代理和 Python 包索引的可获取性需要另行验证。固定的 actorx 版本应使用全新模块缓存与校验和验证；待对应根模块/SDK 版本发布后，再在无任何 replace 的外部应用中重跑构建。

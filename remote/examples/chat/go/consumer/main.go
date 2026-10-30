@@ -45,20 +45,16 @@ func run() (result error) {
 	}
 	fmt.Printf("call turn: %v\n", answer.(map[string]any)["turn"])
 
-	chunks, err := actor.Stream(ctx, message)
-	if err != nil {
-		return err
-	}
-	// Close releases the stream even if iteration exits early.
-	defer func() { result = errors.Join(result, chunks.Close()) }()
-
 	fmt.Print("answer: ")
-	for chunks.Next() {
-		value := chunks.Value().(map[string]any)
+	for chunk, err := range actor.Stream(ctx, message) {
+		if err != nil {
+			return err
+		}
+		value := chunk.(map[string]any)
 		fmt.Print(value["text"])
 	}
 	fmt.Println()
-	return chunks.Err()
+	return nil
 }
 
 func main() {

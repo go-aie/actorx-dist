@@ -348,7 +348,7 @@ sequenceDiagram
     and Consumer segment
         loop Zero or more chunks, within the consumer window
             G-->>C: stream/chunk (consumer SSE)
-            C->>C: Process item, then request the next
+            C->>C: Process and acknowledge the item
             C->>G: stream/ack (HTTP POST)
         end
     end
@@ -547,6 +547,8 @@ The gateway forwards cancellation over registration SSE using the provider ID/to
 
 ### Flow control and terminal results
 
+A valid producer failure seals new data and drains accepted items before reporting its terminal error. Cancellation, deadline, shutdown or damaged protocol evidence may abort draining. A failed final ACK preserves a validated success or business failure only after complete local delivery. Gateway and both SDKs implement this rule; upgrade them together. Go acknowledges after a normal loop body; Python acknowledges the previous item when the next is requested. Early Go loop exit or Python scope exit/explicit close cancels without confirming the pending item. See [process acceptance](development.md#optional-interoperability-checks).
+
 `request_id` references the segment's original ID, preserving string/number/null type. `seq` starts at 1 and is contiguous up to 2^53−1; `ack_seq` and `final_seq` range from 0 to 2^53−1. Chunk and terminal addresses must match the fixed identity.
 
 Each segment has a fixed four-item/32 KiB window with no alternatives negotiated. Count actual UTF-8 bytes of complete JSON-RPC chunks, excluding SSE wrapping; queued and processing items remain charged. Cumulative ack_seq releases only consecutive entries in that segment's ledger. Duplicate/backward credits grant no extra allowance; forward credits are rejected.
@@ -554,11 +556,11 @@ Each segment has a fixed four-item/32 KiB window with no alternatives negotiated
 | Segment | When credit is sent |
 | --- | --- |
 | Provider → gateway | After the proxy's StreamReply.Write hands off into the bounded actorx-dist Stream |
-| Gateway → consumer | After user processing, when iteration requests the next item |
+| Gateway → consumer | After application processing; Go acknowledges normal loop-body completion, Python advances iteration |
 
-Provider credit does not prove final consumer consumption. The gateway callback waits for consumer credit before returning, propagating slow consumption through actorx-dist's window. Upload POSTs perform bounded handoff without waiting for the entire chain; the provider must receive each POST's 204 before sending its next item or terminal. That 204 does not replace credit.
+Provider credit does not prove final consumer consumption. The gateway iterator body waits for consumer credit before completing, propagating slow consumption through actorx-dist's window. Upload POSTs perform bounded handoff without waiting for the entire chain; the provider must receive each POST's 204 before sending its next item or terminal. That 204 does not replace credit.
 
-Control and terminal messages use bounded reserves outside the data window. After the last item, iteration must request the next item to acknowledge it before waiting for completion.
+Control and terminal messages use bounded reserves outside the data window. Complete consumption includes acknowledging the final item.
 
 Three completion facts are assessed separately:
 
@@ -566,9 +568,9 @@ Three completion facts are assessed separately:
 - **Local success**: a valid success terminal has been checked and all N consecutive items have completed local delivery (application consumption or bounded handoff), without skipping queued items. Local consumption failure remains a local failure without erasing the confirmed production outcome.
 - **Ledger reclamation**: the sender retains its unacknowledged ledger until all acknowledgments, the original deadline or connection/session closure.
 
-Errors carry known address and that segment's final_seq in data; they may discard queued items awaiting local delivery, without rolling back output already delivered to users.
+Errors carry the known address and that segment's final_seq in data. Valid producer failures drain accepted items; local aborts may discard them. Already delivered output is not rolled back.
 
-Missing terminal, disconnection, missing items or sequence/identity contradictions produce 1004 `outcome_unknown` when work may have executed. Last-credit transport failure does not rewrite validated success once local delivery is complete.
+Missing terminal, disconnection, missing items or sequence/identity contradictions produce 1004 `outcome_unknown` when work may have executed. Last-credit transport failure does not rewrite a validated success or business failure once local delivery is complete.
 
 ## Deadlines and cancellation
 
@@ -655,7 +657,7 @@ Invalid parameter structure or values use -32602; 1002/1008 reject valid request
 
 Validated provider errors 1000/1001/1002/1004/1005/1008/1009/1013 retain classification; other legal application errors normalize to 1000. Standard RPC errors for known outbound methods become 1012. Known kind/code pairs must agree. Exception types, stack traces and arbitrary provider extensions do not cross actorx-dist; diagnostics are bounded to 512 UTF-8 bytes.
 
-Definite provider failure takes priority over later stop/cancel. Without a definite terminal, classification follows outcome_unknown → activation_unknown → specific framework errors. Local consumption exceptions remain local failures.
+Call preserves definite provider failure over later stop/cancel. Stream first drains accepted data after a valid producer failure, then reports the original failure; local cancellation or damaged protocol evidence can interrupt the drain. Without a definite terminal, classification follows outcome_unknown → activation_unknown → specific framework errors. Local consumption failures remain local failures.
 
 ## Limits and compatibility
 

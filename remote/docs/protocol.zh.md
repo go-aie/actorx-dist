@@ -348,7 +348,7 @@ sequenceDiagram
     and Consumer 段
         loop 零到多个分片，受 consumer 段窗口限制
             G-->>C: stream/chunk（消费 SSE）
-            C->>C: 处理当前项，再请求下一项
+            C->>C: 处理并确认当前项
             C->>G: stream/ack（HTTP POST）
         end
     end
@@ -547,6 +547,8 @@ Gateway 通过注册 SSE，用 provider 段 ID/token 转发取消请求。
 
 ### 流控与终态
 
+有效生产者失败封闭新数据，先排空已接受项，再报告终态错误；取消、期限、关闭或损坏的协议证据可以中断排空。只有完整本地交付与有效终态同时成立，最后一次 ACK 失败才保留原成功或业务失败。Gateway 和两种 SDK 均已实现，应一起升级。Go 在循环体正常返回后确认当前项；Python 在请求下一项时确认上一项。Go 提前退出循环、Python 退出 scope 或显式关闭时取消，不确认悬挂项。另见[进程验收](development.zh.md#按需联调)。
+
 `request_id` 引用本段原请求 ID，保留字符串/数字/null 类型。`seq` 从 1 连续递增，最大 2^53−1；`ack_seq`、`final_seq` 范围为 0 到 2^53−1。所有分片和终态地址须匹配固定身份。
 
 每段固定窗口为四项/32 KiB，不协商其他值。按完整 JSON-RPC chunk 的实际 UTF-8 字节计数，不含 SSE 包装；排队与正在处理项均占额度。累计 ack_seq 只释放本段账本中的连续项，重复/倒退确认不增加额度，超前确认被拒绝。
@@ -554,11 +556,11 @@ Gateway 通过注册 SSE，用 provider 段 ID/token 转发取消请求。
 | 通信段 | 发送 credit 的时刻 |
 | --- | --- |
 | provider → gateway | 代理 StreamReply.Write 成功交入有界 actorx-dist Stream 后 |
-| gateway → consumer | 用户处理完当前项，请求下一项时 |
+| gateway → consumer | 用户处理完成；Go 循环体正常结束，Python 请求下一项时 |
 
-Provider credit 不证明最终 consumer 已消费。Gateway 回调等待 consumer credit 才返回，慢消费经 actorx-dist 窗口传至 provider。上行 POST 只做有界交接，不等待整条消费链；provider 须等每次 POST 的 204 后再发下一项或终态，204 不代替 credit。
+Provider credit 不证明最终 consumer 已消费。Gateway 迭代循环体等待 consumer credit 才完成，慢消费经 actorx-dist 窗口传至 provider。上行 POST 只做有界交接，不等待整条消费链；provider 须等每次 POST 的 204 后再发下一项或终态，204 不代替 credit。
 
-控制与终态使用数据窗口外的有界预留。处理最后一项后仍须请求下一项，先确认该项再等待结束。
+控制与终态使用数据窗口外的有界预留。完整消费包括最后一项的消费确认。
 
 三个完成事实分别判断：
 
@@ -566,9 +568,9 @@ Provider credit 不证明最终 consumer 已消费。Gateway 回调等待 consum
 - **本地成功**：合法成功终态已通过校验，连续 N 项均完成本地交付责任（应用消费或有界转交），不能跳过排队项。本地消费失败保留为本地失败，不抹去确定的产出结果。
 - **账本回收**：发送端保留未确认账本，直至全部 ack、原期限到达或连接/会话关闭。
 
-错误在 data 中附已知 address 和本段 final_seq，可以丢弃尚未完成本地交付的排队项，已交给用户的部分结果不回滚。
+错误在 data 中附已知 address 和本段 final_seq。有效生产者失败先排空已接受项；本地中止可以丢弃排队项，已交给用户的部分结果不回滚。
 
-缺终态、断线、缺块或序号/身份矛盾，且业务可能已执行时，为 1004 `outcome_unknown`。最后 credit 的传输失败不改写已校验且完成本地交付的成功证据。
+缺终态、断线、缺块或序号/身份矛盾，且业务可能已执行时，为 1004 `outcome_unknown`。最后 credit 的传输失败不改写已校验且完成本地交付的成功或业务失败证据。
 
 ## 期限与取消
 
@@ -655,7 +657,7 @@ Python 应使用 `async with` 和 `async for` 消费，提前 break 也须退出
 
 经校验的 provider 错误 1000/1001/1002/1004/1005/1008/1009/1013 保留分类，其他合法应用错误归一为 1000；已知出站方法的标准 RPC 错误转为 1012。已知 kind/code 必须一致。异常类型、堆栈和任意 provider 扩展数据不穿过 actorx-dist，诊断最多 512 UTF-8 字节。
 
-确定的 provider 失败优先于稍后的停止/取消；无确定终态时按 outcome_unknown → activation_unknown → 具体框架错误分类。用户本地消费异常保留为本地失败。
+Call 的确定 provider 失败优先于稍后的停止/取消。Stream 收到有效生产者失败后先排空已接受数据，再报告原失败；本地取消或损坏的协议证据可以中断排空。无确定终态时按 outcome_unknown → activation_unknown → 具体框架错误分类。用户本地消费失败保留为本地失败。
 
 ## 限制与兼容
 

@@ -86,6 +86,9 @@ func (h *handler) stream(w http.ResponseWriter, ctx context.Context, m protocol.
 	if write(stream.Open()) != nil {
 		return
 	}
-	terminal := stream.Run(write)
-	_ = write(terminal)
+	for m := range stream.Messages() {
+		if write(m) != nil {
+			return
+		}
+	}
 }

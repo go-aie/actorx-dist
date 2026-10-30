@@ -171,29 +171,34 @@ func TestConfiguredLimitsNATS(t *testing.T) {
 		ctx := testContext(t)
 		entered, done := make(chan struct{}), make(chan error, 1)
 		go func() {
-			done <- addr.Stream[int](ctx, limitStream{}, func(int) error {
+			var result error
+			for _, err := range addr.Stream[int](ctx, limitStream{}) {
+				if err != nil {
+					result = err
+					break
+				}
 				close(entered)
 				<-consumer
-				return nil
-			})
+			}
+			done <- result
 		}()
 		await(t, entered)
-		if err := addr.Stream[int](ctx, limitStream{}, func(int) error { return nil }); !errors.Is(err, actorx.ErrFull) {
+		if err := streamError(addr.Stream[int](ctx, limitStream{})); !errors.Is(err, actorx.ErrFull) {
 			t.Fatal("outgoing Streams exceeded", err)
 		}
-		if err := otherAddr.Stream[int](ctx, limitStream{}, func(int) error { return nil }); !errors.Is(err, actorx.ErrFull) {
+		if err := streamError(otherAddr.Stream[int](ctx, limitStream{})); !errors.Is(err, actorx.ErrFull) {
 			t.Fatal("incoming Streams exceeded", err)
 		}
 		releaseProducer()
 		// Even after producer termination, the active consumer retains capacity.
-		if err := addr.Stream[int](ctx, limitStream{}, func(int) error { return nil }); !errors.Is(err, actorx.ErrFull) {
+		if err := streamError(addr.Stream[int](ctx, limitStream{})); !errors.Is(err, actorx.ErrFull) {
 			t.Fatal("active callback released stream capacity", err)
 		}
 		releaseConsumer()
 		if err := <-done; err != nil {
 			t.Fatal(err)
 		}
-		if err := addr.Stream[int](ctx, limitStream{}, func(int) error { return nil }); err != nil {
+		if err := streamError(addr.Stream[int](ctx, limitStream{})); err != nil {
 			t.Fatal("settlement did not restore stream capacity", err)
 		}
 	})

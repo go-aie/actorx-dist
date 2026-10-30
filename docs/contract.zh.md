@@ -64,7 +64,7 @@ query callback 使用共享普通分派及 payload 槽；快照 Call 使用本�
 | cancel / invoke | 原请求身份及有界 cause，仅 Call/Stream，不表示新结果或受理 |
 | window / invoke | 原请求身份，seq=最后连续消费序号，items/bytes=本次精确归还额度，仅 Stream；重放/膨胀额度为协议错误 |
 
-错误完成在 payload 中携带受理证据：精确目标仅在 mailbox 前明确拒绝时可写 `{"admission":"not_admitted"}`，否则为 `{"admission":"unknown"}`。错误不推定回滚。Stream 最终 seq 为已产出 chunk 数，错误终止也携带；缺块、重复或乱序不能成功。窗口包含活动消费回调，仅在回调退出后归还；取消/失败后不启动新回调，所有返回路径先等待活动回调，再释放预算。终止/控制/取消/窗口帧不能创建关联。
+错误完成在 payload 中携带受理证据：精确目标仅在 mailbox 前明确拒绝时可写 `{"admission":"not_admitted"}`，否则为 `{"admission":"unknown"}`。错误不推定回滚。Stream 最终 seq 为已产出 chunk 数，错误终止也携带；缺块、重复或乱序不能成功。有效失败终态封闭新数据，先排空已接受数据，再交付错误；本地中止或损坏的协议证据可以中断排空。窗口包含活动迭代循环体，仅在其正常结束后发送成功确认。提前退出和 panic 丢弃而不归还成功额度，清理须等活动循环体退出后释放预算。Complete 封闭写入；未结清消费收据的有界路由保留至 ACK、放弃或到期，与可取消的写入等待分别处理。终止/控制/取消/窗口帧不能创建关联。
 
 Send 只在本地 Addr.Send 受理后完成；Call 需要有效最终结果、不增加 ACK；Stream 需要成功最终序号与完整消费。Stop 证明关闭受理（FAILED 另需释放），Wait 仅使用 Registry COMMITTED，Close 包含全部所属清理。同进程调用仍经过 NATS。
 
@@ -106,7 +106,7 @@ message 最多 512 UTF-8 字节；最多 4 个 source，每项 operation≤32、
 | 网络分派 | 业务队列32 帧/4 MiB、8 worker；控制/取消队列64 帧/8 MiB、4 worker | 复制帧入队前计费→分派返回；有效识别的满载 ErrFull，不按消息创建 goroutine |
 | codec/Runtime | 编解码并发槽8，各≤128 KiB 输入+128 KiB 输出，共2 MiB；深度32/节点8192 | 遍历/复制前→交给其他已计费持有者或丢弃；ErrFull/ErrChunkSize |
 | 网络保留 payload/Runtime | 32 缓冲/4 MiB，关联另留≤2 KiB 元数据/项 | 持有前→最终持有者释放，无未计费副本 |
-| Stream 消费窗口/Runtime | 入站/出站合计16 流，各4 项/64 KiB；总预留64 项/1 MiB，包含活动回调 | 开始前预留整个窗口→回调退出且关联关闭；ErrFull，帧队列另计 |
+| Stream 消费窗口/Runtime | 入站/出站合计16 流，各4 项/64 KiB；总预留64 项/1 MiB，包含活动循环体 | 开始前预留整个窗口→循环体退出且关联关闭；ErrFull，帧队列另计 |
 | Registry 扫描/工作 Runtime | 1 scanner，每页64 个序号位置、每秒≤1 页、最多32 个候选，不建立 KV watch | 扫描前→本页/尝试返回；满载暂停，调用方不执行写维护 |
 | 提交/控制任务/Runtime | 使用已有64 代条目，每代最多1 工作，保留管理/控制队列及2 个 SDK 槽 | 清理开始→核实提交/释放，不因满载丢弃证据 |
 | 诊断/Runtime | 非阻塞64 事件，各≤1 KiB，溢出合并计数 | 回调→排空/关闭，不在 SDK 线程执行任意用户回调 |

@@ -74,11 +74,16 @@ class Stream:
         self.wake = asyncio.Event()
         self.terminal = False
         self.remote_terminal = False
+
+        # A validated producer failure seals ingress but still permits draining.
+        # Local failures instead abort delivery immediately.
+        self.terminal_error: RemoteError | None = None
         self.error: BaseException | None = None
         self.seq = 0
         self.previous = 0
         self.sizes: dict[int, int] = {}
         self.reader: asyncio.Task[None] | None = None
+        self._ack_task: asyncio.Task[None] | None = None
         self.closed = False
         self._close_task: asyncio.Task[None] | None = None
         self.dispatched = False
@@ -112,6 +117,8 @@ class Stream:
         if seq is not None:
             params["ack_seq"] = seq
         async with asyncio.timeout_at(self.deadline):
+            if asyncio.get_running_loop().time() >= self.deadline:
+                raise TimeoutError()
             await self.addr._runtime._http.reply(
                 p.encode(p.notification(method, params)), None
             )
@@ -121,44 +128,69 @@ class Stream:
             self._start()
         async with self._next_lock:
             if self.closed:
-                # Close publishes its outcome after joining the reader. Both
-                # waiting and subsequent next calls must observe that outcome.
+                # Join reader/control cleanup before reporting the close outcome
+                # to waiting and subsequent next calls.
                 await self.aclose()
                 if self.error is not None:
                     raise self.error
                 raise StopAsyncIteration
             try:
                 async with asyncio.timeout_at(self.deadline):
+                    if self.error is not None:
+                        raise self.error
+
+                    # timeout_at schedules cancellation on the next loop turn;
+                    # queued values must not bypass an already expired budget.
+                    if asyncio.get_running_loop().time() >= self.deadline:
+                        raise TimeoutError()
+
                     if self.previous:
                         # Requesting another item marks the previous one consumed,
                         # including when its terminal has already arrived.
                         seq, self.previous = self.previous, 0
                         self.sizes.pop(seq, None)
                         try:
-                            await self._control("stream/ack", seq)
+                            self._ack_task = asyncio.create_task(
+                                self._control("stream/ack", seq),
+                                name="actorx-remote-stream-ack",
+                            )
+                            await self._ack_task
                         except (TransportError, TimeoutError):
-                            if not self.terminal:
+                            if not self._consumed_terminal():
                                 raise
+                        finally:
+                            self._ack_task = None
 
                     while True:
-                        if self.terminal and self.error is not None:
+                        if self.error is not None:
                             raise self.error
+                        if asyncio.get_running_loop().time() >= self.deadline:
+                            raise TimeoutError()
                         if not self.queue.empty():
                             self.previous, value = self.queue.get_nowait()
                             return value
                         if self.terminal:
-                            await self.aclose()
-                            raise StopAsyncIteration
+                            break
                         self.wake.clear()
                         await self.wake.wait()
+
+                # Finish outside the iteration timer so expiry cannot abandon
+                # cleanup or overwrite a fully delivered producer terminal.
+                await self.aclose()
+                if self.error is not None:
+                    raise self.error
+                raise StopAsyncIteration
             except TimeoutError:
-                # The final ack's HTTP response may stall after a valid terminal
-                # arrived over SSE. Preserve that evidence when delivery is done.
-                if self.remote_terminal and self.error is not None:
+                if self.error is not None:
                     await self.aclose()
                     raise self.error
-                if self._consumed_success():
+
+                # The final ack's HTTP response may stall after a valid terminal
+                # arrived over SSE. Preserve that evidence when delivery is done.
+                if self._consumed_terminal():
                     await self.aclose()
+                    if self.error is not None:
+                        raise self.error
                     raise StopAsyncIteration
                 if self.remote_terminal:
                     self.error = DeadlineExceededError(
@@ -180,9 +212,21 @@ class Stream:
                 raise self.error from None
             except StopAsyncIteration:
                 raise
-            except BaseException:
+            except asyncio.CancelledError:
                 await self.aclose()
-                raise
+                # Close cancels an SDK-owned ACK task, never the application
+                # task. Preserve genuine caller cancellation unchanged.
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise
+                if self.error is not None:
+                    raise self.error
+                raise StopAsyncIteration
+            except BaseException as exc:
+                if self.error is None:
+                    self.error = exc
+                await self.aclose()
+                raise self.error
 
     async def _read(self) -> None:
         try:
@@ -326,6 +370,7 @@ class Stream:
             refused = e.rpc_code in (1002, 1008)
             if refused and self.seq != 0:
                 raise ProtocolError("Rejection after stream output")
+
             # 1013 is definite only with a fixed identity and zero output.
             if e.rpc_code == 1013 and (
                 not isinstance(e.data, dict)
@@ -339,9 +384,8 @@ class Stream:
                 if "address" in e.data:
                     self.addr._save(e.data["address"])
                 if (
-                    (self.token is not None or (refused and "final_seq" in e.data))
-                    and sequence(e.data.get("final_seq")) != self.seq
-                ):
+                    self.token is not None or (refused and "final_seq" in e.data)
+                ) and sequence(e.data.get("final_seq")) != self.seq:
                     raise ProtocolError("Invalid error final sequence")
             elif self.token is not None:
                 raise ProtocolError("Missing stream error sequence")
@@ -357,7 +401,7 @@ class Stream:
                 ) from e
             if e.rpc_code in (1003, 1004):
                 self.addr._unknown()
-            self.error = e
+            self.terminal_error = e
         else:
             result = p.fields(
                 m["result"], ("address", "final_seq"), ("address", "final_seq")
@@ -370,7 +414,7 @@ class Stream:
         self.terminal = True
         self.wake.set()
 
-    def _consumed_success(self) -> bool:
+    def _consumed_terminal(self) -> bool:
         return (
             self.remote_terminal
             and self.error is None
@@ -384,22 +428,38 @@ class Stream:
             self._close_task = asyncio.create_task(
                 self._close(), name="actorx-remote-stream-close"
             )
+
         # A canceled closer must not abandon cancellation and reader cleanup.
         await asyncio.shield(self._close_task)
 
     async def _close(self) -> None:
-        if not self.remote_terminal:
+        consumed = self._consumed_terminal()
+        if self.error is None:
+            self.error = (
+                self.terminal_error
+                if consumed
+                else RemoteError("canceled", 1009, "Stream was closed locally")
+            )
+
+        # Join only SDK IO tasks. The application may still be inside its loop
+        # body; closing the scope does not claim that item was consumed.
+        tasks = [t for t in (self.reader, self._ack_task) if t is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        if not consumed:
             try:
                 await self._control("stream/cancel")
             except (TransportError, TimeoutError):
                 pass
             if self.dispatched and "generation" not in self.addr._address:
                 self.addr._unknown()
-        if self.reader is not None:
-            self.reader.cancel()
-            await asyncio.gather(self.reader, return_exceptions=True)
+
+        self.previous = 0
+        self.sizes.clear()
+        while not self.queue.empty():
+            self.queue.get_nowait()
         self.addr._runtime._streams.discard(self)
-        if self.error is None and not self._consumed_success():
-            self.error = RemoteError("canceled", 1009, "Stream was closed locally")
         self.terminal = True
         self.wake.set()

@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-aie/actorx-dist/remote/sdk/go/internal/wire"
@@ -28,246 +30,354 @@ type streamItem struct {
 	value any
 }
 
-// Stream owns an SSE connection and its Addr's operation lock until exhausted,
-// closed or expired. Next/Value/Err have one consumer; Close may run concurrently.
-// Calling Next acknowledges the previously delivered item. Always check Err
-// after Next returns false, and Close when stopping before exhaustion.
-type Stream struct {
+// streamReceiver owns only transport and bounded ingress state. The sequence
+// owns delivery, credit, disposal and the Runtime/Addr reservations.
+type streamReceiver struct {
 	addr     *Addr
 	id       string
 	token    string
 	ctx      context.Context
-	ioCtx    context.Context
+	budget   context.Context // original caller budget, also used for best-effort cancellation
 	cancelIO context.CancelFunc
 	body     io.ReadCloser
 	reader   *sseReader
 
-	// mu protects consumer delivery, reader progress and terminal state.
 	mu             sync.Mutex
 	queue          []streamItem
-	sizes          map[uint64]int // queued and delivered items awaiting consumption
-	seq            uint64
-	previous       uint64
-	value          any
-	terminal       bool
+	sizes          map[uint64]int // includes the active loop body
+	seq, consumed  uint64
 	remoteTerminal bool
-	err            error
+	endErr         error // validated producer failure, delivered after draining
+	err            error // local abort, interrupts draining
 	closing        bool
 
-	wake        chan struct{}
-	closeSignal chan struct{}
-	readerDone  chan struct{}
-	closeDone   chan struct{}
-	closeOnce   sync.Once
-	controlMu   sync.Mutex // serializes credit and cancellation POSTs
+	wake       chan struct{}
+	readerDone chan struct{}
+	stopWatch  func() bool
+	watchDone  chan struct{}
+	stopBody   func() bool
+	bodyDone   chan struct{}
+	cancelOnce sync.Once
+	controlMu  sync.Mutex
 }
 
-// Stream establishes HTTP and validates stream/opened before returning. Requests
-// and chunks follow encoding/json; decoded values preserve json.Number.
-func (a *Addr) Stream(parent context.Context, message any, opts ...StreamOption) (*Stream, error) {
-	o := streamOptions{callTimeout}
-	for _, opt := range opts {
-		if opt == nil {
-			return nil, fmt.Errorf("actorxremote: invalid stream option")
+// Stream returns a lazy, single-use sequence of JSON values and errors. Its
+// budget, input snapshot and HTTP request start on iteration. Only a normally
+// returning loop body acknowledges a chunk; break, return and panic cancel it.
+// Keep message and its referenced data stable until iteration starts.
+func (a *Addr) Stream(parent context.Context, message any, opts ...StreamOption) iter.Seq2[any, error] {
+	var used atomic.Bool
+
+	return func(yield func(any, error) bool) {
+		if !used.CompareAndSwap(false, true) {
+			yield(nil, ErrStreamUsed)
+			return
 		}
-		opt(&o)
-	}
-	if o.timeout <= 0 || o.timeout > 60*time.Second {
-		return nil, fmt.Errorf("actorxremote: stream timeout must be in (0, 60s]")
-	}
+		if a == nil || a.runtime == nil || parent == nil {
+			yield(nil, fmt.Errorf("actorxremote: invalid stream context or address"))
+			return
+		}
 
-	budget, cancel := context.WithTimeout(parent, o.timeout)
-	ctx, end, err := a.runtime.begin(budget)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
+		o := streamOptions{callTimeout}
+		for _, opt := range opts {
+			if opt == nil {
+				yield(nil, fmt.Errorf("actorxremote: invalid stream option"))
+				return
+			}
+			opt(&o)
+		}
+		if o.timeout <= 0 || o.timeout > 60*time.Second {
+			yield(nil, fmt.Errorf("actorxremote: stream timeout must be in (0, 60s]"))
+			return
+		}
 
-	// Setup owns cleanup until stream/opened is validated. After that, the
-	// stream's close goroutine owns the budget, Runtime work and Addr lock.
-	owned := false
-	locked := false
-	defer func() {
-		if !owned {
+		budget, cancel := context.WithTimeout(parent, o.timeout)
+		ctx, end, err := a.runtime.begin(budget)
+		if err != nil {
+			cancel()
+			yield(nil, err)
+			return
+		}
+
+		var s *streamReceiver
+		locked := false
+		closeScope := sync.OnceFunc(func() {
+			if s != nil {
+				s.close()
+			}
 			if locked {
 				<-a.operation
 			}
 			end()
 			cancel()
+		})
+		defer closeScope() // also handles early return and panic without recovering it
+
+		fail := func(err error) {
+			closeScope()
+			yield(nil, err)
 		}
-	}()
 
-	input, err := snapshot(message)
-	if err != nil {
-		return nil, err
-	}
-	select {
-	case a.operation <- struct{}{}:
-		locked = true
-	case <-ctx.Done():
-		return nil, beforeDispatch(ctx.Err())
-	}
-	if ctx.Err() != nil {
-		return nil, beforeDispatch(ctx.Err())
-	}
-
-	a.mu.Lock()
-	uncertain := a.uncertain
-	a.mu.Unlock()
-	if uncertain {
-		return nil, &RemoteError{Code: "address_uncertain"}
-	}
-
-	var random [16]byte
-	if _, err := rand.Read(random[:]); err != nil {
-		return nil, transportError(nil)
-	}
-	id := "c:" + hex.EncodeToString(random[:])
-	deadline, _ := ctx.Deadline()
-	raw, err := wire.Request("actor/stream", id, struct {
-		Address  Address         `json:"address"`
-		Input    json.RawMessage `json:"input"`
-		Deadline int64           `json:"deadline_unix_ms"`
-	}{a.Address(), input, deadline.UnixMilli()})
-	if err != nil {
-		return nil, err
-	}
-	if ctx.Err() != nil {
-		return nil, beforeDispatch(ctx.Err())
-	}
-
-	ioCtx, cancelIO := context.WithCancel(ctx)
-	s := &Stream{
-		addr:        a,
-		id:          id,
-		ctx:         ctx,
-		ioCtx:       ioCtx,
-		cancelIO:    cancelIO,
-		sizes:       make(map[uint64]int),
-		wake:        make(chan struct{}, 1),
-		closeSignal: make(chan struct{}),
-		readerDone:  make(chan struct{}),
-		closeDone:   make(chan struct{}),
-	}
-	response, err := a.runtime.post(ioCtx, raw, true, "")
-	if err != nil {
-		cancelIO()
-		if connectionFailed(err) {
-			if ctx.Err() != nil {
-				return nil, beforeDispatch(ctx.Err())
-			}
-			return nil, transportError(errConnection)
+		input, err := snapshot(message)
+		if err != nil {
+			fail(err)
+			return
 		}
-		return nil, a.noEvidence(ctx, transportError(err))
-	}
-	s.body = response.Body
 
-	// Closing the body also interrupts controlled transports which do not
-	// observe the request context.
-	bodyClosed := make(chan struct{})
-	stopBody := context.AfterFunc(ioCtx, func() {
-		s.body.Close()
-		close(bodyClosed)
-	})
-	cleanupBody := func() {
-		cancelIO()
-		s.body.Close()
-		if !stopBody() {
-			<-bodyClosed
-		}
-	}
-
-	if response.StatusCode != 200 {
-		cleanupBody()
-		e := statusError(response.StatusCode)
-		if response.StatusCode >= 500 {
-			return nil, a.noEvidence(ctx, e)
-		}
-		return nil, e
-	}
-
-	s.reader = newSSEReader(response.Body)
-	if mediaType(response.Header) == "application/json" {
-		raw, err := readBody(response.Body)
-		if err == nil {
-			var m wire.Message
-			m, err = wire.Response(raw, id)
-			if err == nil && m.Error != nil {
-				err = s.acceptTerminal(m)
-			} else {
-				err = protocolError()
-			}
-		}
-		cleanupBody()
-		if s.remoteTerminal {
-			return nil, s.err
-		}
-		return nil, a.noEvidence(ctx, err)
-	}
-	if mediaType(response.Header) != "text/event-stream" {
-		cleanupBody()
-		return nil, a.noEvidence(ctx, protocolError())
-	}
-	first, err := s.reader.next()
-	if err == nil {
-		err = s.open(first)
-	}
-	if err != nil {
-		cleanupBody()
-		return nil, a.noEvidence(ctx, err)
-	}
-
-	owned = true
-	go s.read()
-	go func() {
 		select {
-		case <-s.closeSignal:
+		case a.operation <- struct{}{}:
+			locked = true
 		case <-ctx.Done():
+			fail(beforeDispatch(ctx.Err()))
+			return
 		}
-		s.mu.Lock()
-		s.closing = true
-		if !s.terminal || (s.err == nil && (len(s.queue) > 0 || s.previous != 0)) {
-			if ctx.Err() != nil {
-				if ctx.Err() == context.Canceled {
-					s.err = context.Canceled
-				} else if s.remoteTerminal {
-					s.err = remoteError(1005, ctx.Err())
+		if ctx.Err() != nil {
+			fail(beforeDispatch(ctx.Err()))
+			return
+		}
+		a.mu.Lock()
+		uncertain := a.uncertain
+		a.mu.Unlock()
+		if uncertain {
+			fail(&RemoteError{Code: "address_uncertain"})
+			return
+		}
+
+		var random [16]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			fail(transportError(nil))
+			return
+		}
+		id := "c:" + hex.EncodeToString(random[:])
+		deadline, _ := ctx.Deadline()
+		raw, err := wire.Request("actor/stream", id, struct {
+			Address  Address         `json:"address"`
+			Input    json.RawMessage `json:"input"`
+			Deadline int64           `json:"deadline_unix_ms"`
+		}{a.Address(), input, deadline.UnixMilli()})
+		if err != nil {
+			fail(err)
+			return
+		}
+		if ctx.Err() != nil {
+			fail(beforeDispatch(ctx.Err()))
+			return
+		}
+
+		ioCtx, cancelIO := context.WithCancel(ctx)
+		s = &streamReceiver{
+			addr:     a,
+			id:       id,
+			ctx:      ctx,
+			budget:   budget,
+			cancelIO: cancelIO,
+			sizes:    make(map[uint64]int),
+			wake:     make(chan struct{}, 1),
+		}
+		response, err := a.runtime.post(ioCtx, raw, true, "")
+		if err != nil {
+			if connectionFailed(err) {
+				if ctx.Err() != nil {
+					err = beforeDispatch(ctx.Err())
 				} else {
-					s.err = a.noEvidence(ctx, ctx.Err())
+					err = transportError(errConnection)
 				}
 			} else {
-				s.err = remoteError(1009, nil)
-				if !s.remoteTerminal {
-					a.unknown()
+				err = a.noEvidence(ctx, transportError(err))
+			}
+			fail(err)
+			return
+		}
+		s.body = response.Body
+
+		// Also interrupt bounded custom transports which ignore request context.
+		s.bodyDone = make(chan struct{})
+		s.stopBody = context.AfterFunc(ioCtx, func() {
+			s.body.Close()
+			close(s.bodyDone)
+		})
+		if response.StatusCode != 200 {
+			err := statusError(response.StatusCode)
+			if response.StatusCode >= 500 {
+				err = a.noEvidence(ctx, err)
+			}
+			fail(err)
+			return
+		}
+
+		s.reader = newSSEReader(response.Body)
+		if mediaType(response.Header) == "application/json" {
+			raw, err := readBody(response.Body)
+			if err == nil {
+				var m wire.Message
+				m, err = wire.Response(raw, id)
+				if err == nil && m.Error != nil {
+					err = s.acceptTerminal(m)
+				} else {
+					err = protocolError()
 				}
 			}
-			s.terminal = true
+			if s.remoteTerminal {
+				fail(s.endErr)
+			} else {
+				fail(a.noEvidence(ctx, err))
+			}
+			return
 		}
-		remote := s.remoteTerminal
-		s.mu.Unlock()
-		s.notify()
-		cancelIO()
-		s.body.Close()
-
-		// The cancellation POST uses only the original remaining budget. It is
-		// best effort; no new timeout or retry is started after caller cancellation.
-		s.controlMu.Lock()
-		if !remote && budget.Err() == nil {
-			_ = s.control(budget, "stream/cancel", 0)
+		if mediaType(response.Header) != "text/event-stream" {
+			fail(a.noEvidence(ctx, protocolError()))
+			return
 		}
-		s.controlMu.Unlock()
 
-		<-s.readerDone
-		cleanupBody()
-		<-a.operation
-		end()
-		cancel()
-		close(s.closeDone)
-	}()
-	return s, nil
+		first, err := s.reader.next()
+		if err == nil {
+			err = s.open(first)
+		}
+		if err != nil {
+			fail(a.noEvidence(ctx, err))
+			return
+		}
+
+		s.readerDone, s.watchDone = make(chan struct{}), make(chan struct{})
+		s.stopWatch = context.AfterFunc(ctx, func() {
+			s.mu.Lock()
+			s.checkContext()
+			s.mu.Unlock()
+			s.notify()
+			s.cancelIO()
+			s.cancelRemote()
+			close(s.watchDone)
+		})
+		go s.read()
+
+		// The only delivery loop: queue removal alone returns no credit. User
+		// code runs synchronously here, with the full reservation still held.
+		for {
+			s.mu.Lock()
+			s.checkContext()
+			err := s.err
+			complete := s.complete()
+			endErr := s.endErr
+			var item streamItem
+			if err == nil && !complete && len(s.queue) > 0 {
+				item = s.queue[0]
+				s.queue[0] = streamItem{}
+				s.queue = s.queue[1:]
+			}
+			s.mu.Unlock()
+			if err != nil {
+				fail(err)
+				return
+			}
+			if complete {
+				closeScope()
+				if endErr != nil {
+					yield(nil, endErr)
+				}
+				return
+			}
+			if item.seq == 0 {
+				select {
+				case <-s.wake:
+				case <-ctx.Done():
+				}
+				continue
+			}
+
+			if !yield(item.value, nil) {
+				return
+			}
+
+			s.mu.Lock()
+			s.checkContext()
+			err = s.err
+			if err == nil {
+				s.consumed = item.seq
+				delete(s.sizes, item.seq)
+			}
+			s.mu.Unlock()
+			if err != nil {
+				fail(err)
+				return
+			}
+
+			s.controlMu.Lock()
+			err = s.control(ioCtx, "stream/ack", item.seq)
+			s.controlMu.Unlock()
+			if err != nil {
+				s.mu.Lock()
+				// Only complete delivery plus valid terminal evidence can make
+				// the final ACK failure harmless, for success or business failure.
+				if !s.complete() && s.err == nil {
+					s.err = a.noEvidence(ctx, err)
+				}
+				s.mu.Unlock()
+			}
+		}
+	}
 }
 
-func (s *Stream) open(raw []byte) error {
+// Caller holds mu. Producer completion and local consumption are independent.
+func (s *streamReceiver) complete() bool {
+	return s.remoteTerminal && s.consumed == s.seq && s.err == nil
+}
+
+func (s *streamReceiver) checkContext() {
+	if s.ctx.Err() == nil || s.err != nil || s.complete() {
+		return
+	}
+	if s.ctx.Err() == context.Canceled {
+		s.err = context.Canceled
+	} else if s.remoteTerminal {
+		s.err = remoteError(1005, s.ctx.Err())
+	} else {
+		s.err = s.addr.noEvidence(s.ctx, s.ctx.Err())
+	}
+}
+
+func (s *streamReceiver) cancelRemote() {
+	s.cancelOnce.Do(func() {
+		s.mu.Lock()
+		incomplete := !s.complete()
+		s.mu.Unlock()
+		if incomplete && s.token != "" && s.budget.Err() == nil {
+			s.controlMu.Lock()
+			_ = s.control(s.budget, "stream/cancel", 0)
+			s.controlMu.Unlock()
+		}
+	})
+}
+
+// Only the iterator calls close, after the active body has exited. A watcher
+// may stop IO earlier, but cannot discard that body's value or release its slot.
+func (s *streamReceiver) close() {
+	s.mu.Lock()
+	s.closing = true
+	if s.token != "" && !s.remoteTerminal {
+		s.addr.unknown()
+	}
+	s.mu.Unlock()
+
+	s.cancelIO()
+	if s.body != nil {
+		s.body.Close()
+		if !s.stopBody() {
+			<-s.bodyDone
+		}
+	}
+	if s.stopWatch != nil && !s.stopWatch() {
+		<-s.watchDone
+	}
+	s.cancelRemote()
+	if s.readerDone != nil {
+		<-s.readerDone
+	}
+
+	s.queue = nil
+	s.sizes = nil
+}
+
+func (s *streamReceiver) open(raw []byte) error {
 	m, err := wire.Parse(raw)
 	if err != nil || !m.Request || m.Method != "stream/opened" || m.ID != nil {
 		return protocolError()
@@ -289,16 +399,16 @@ func mustID(id string) json.RawMessage {
 	return raw
 }
 
-func (s *Stream) notify() {
+func (s *streamReceiver) notify() {
 	select {
 	case s.wake <- struct{}{}:
 	default:
 	}
 }
 
-func (s *Stream) requestClose() { s.closeOnce.Do(func() { close(s.closeSignal) }) }
-
-func (s *Stream) read() {
+// The reader only validates, queues and records evidence. It never runs user
+// code or releases the iterator's Runtime work or Addr operation lock.
+func (s *streamReceiver) read() {
 	defer close(s.readerDone)
 	for {
 		raw, err := s.reader.next()
@@ -321,7 +431,7 @@ func (s *Stream) read() {
 						err = s.acceptTerminal(m)
 					}
 				}
-				terminal := s.terminal
+				terminal := s.remoteTerminal
 				s.mu.Unlock()
 				s.notify()
 				if err == nil && terminal {
@@ -331,20 +441,19 @@ func (s *Stream) read() {
 		}
 		if err != nil {
 			s.mu.Lock()
-			if !s.closing && !s.remoteTerminal {
+			if !s.closing && s.err == nil {
 				s.err = s.addr.noEvidence(s.ctx, err)
-				s.terminal = true
 			}
 			s.mu.Unlock()
 			s.notify()
-			s.requestClose()
+			s.cancelIO()
 			return
 		}
 	}
 }
 
 // Called under mu once published; during setup no other goroutine has access.
-func (s *Stream) chunk(m wire.Message, size int) error {
+func (s *streamReceiver) chunk(m wire.Message, size int) error {
 	if m.Method != "stream/chunk" || m.ID != nil {
 		return protocolError()
 	}
@@ -383,7 +492,7 @@ func (s *Stream) chunk(m wire.Message, size int) error {
 
 // acceptTerminal runs under mu after setup. A validated remote terminal fixes
 // the outcome, but successful iteration still requires consuming queued items.
-func (s *Stream) acceptTerminal(m wire.Message) error {
+func (s *streamReceiver) acceptTerminal(m wire.Message) error {
 	if m.Error != nil {
 		if wire.ValidateError(m.Error) != nil {
 			return protocolError()
@@ -419,7 +528,7 @@ func (s *Stream) acceptTerminal(m wire.Message) error {
 		if e.Code == 1003 || e.Code == 1004 {
 			s.addr.unknown()
 		}
-		s.err = remote
+		s.endErr = remote
 	} else {
 		f, err := wire.Fields(m.Result, []string{"address", "final_seq"}, "address", "final_seq")
 		if err != nil {
@@ -434,11 +543,10 @@ func (s *Stream) acceptTerminal(m wire.Message) error {
 		}
 	}
 	s.remoteTerminal = true
-	s.terminal = true
 	return nil
 }
 
-func (s *Stream) control(ctx context.Context, method string, seq uint64) error {
+func (s *streamReceiver) control(ctx context.Context, method string, seq uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -461,101 +569,5 @@ func (s *Stream) control(ctx context.Context, method string, seq uint64) error {
 	if resp.StatusCode != 204 {
 		return statusError(resp.StatusCode)
 	}
-	return nil
-}
-
-// Next marks the previous value consumed before waiting for the next value.
-func (s *Stream) Next() bool {
-	s.mu.Lock()
-	if s.closing {
-		s.mu.Unlock()
-		<-s.closeDone
-		return false
-	}
-	previous := s.previous
-	s.previous = 0
-	delete(s.sizes, previous)
-	s.mu.Unlock()
-
-	// Delivery alone does not free credit. The caller confirms consumption by
-	// asking for the next item, including after processing the final item.
-	if previous != 0 {
-		s.controlMu.Lock()
-		err := s.control(s.ioCtx, "stream/ack", previous)
-		s.controlMu.Unlock()
-		if err != nil {
-			s.mu.Lock()
-			// A credit transport failure cannot erase an already valid terminal.
-			if !s.terminal {
-				s.err = s.addr.noEvidence(s.ctx, err)
-				s.terminal = true
-			}
-			s.mu.Unlock()
-		}
-	}
-
-	for {
-		s.mu.Lock()
-		if s.closing || s.err != nil {
-			s.mu.Unlock()
-			s.Close()
-			return false
-		}
-		if s.terminal && len(s.queue) == 0 {
-			s.mu.Unlock()
-			s.Close()
-			return false
-		}
-		if s.ctx.Err() != nil {
-			if s.ctx.Err() == context.Canceled {
-				s.err = context.Canceled
-			} else if s.remoteTerminal {
-				s.err = remoteError(1005, s.ctx.Err())
-			} else {
-				s.err = s.addr.noEvidence(s.ctx, s.ctx.Err())
-			}
-			s.mu.Unlock()
-			s.Close()
-			return false
-		}
-		if len(s.queue) > 0 {
-			item := s.queue[0]
-			s.queue = s.queue[1:]
-			s.previous = item.seq
-			s.value = item.value
-			s.mu.Unlock()
-			return true
-		}
-		terminal := s.terminal
-		s.mu.Unlock()
-		if terminal {
-			s.Close()
-			return false
-		}
-		select {
-		case <-s.wake:
-		case <-s.ctx.Done():
-		}
-	}
-}
-
-// Value returns the most recently delivered JSON value.
-func (s *Stream) Value() any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.value
-}
-
-// Err reports why iteration ended, or nil after successful exhaustion.
-func (s *Stream) Err() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.err
-}
-
-// Close is idempotent, wakes Next and joins the reader and control POSTs.
-func (s *Stream) Close() error {
-	s.requestClose()
-	<-s.closeDone
 	return nil
 }

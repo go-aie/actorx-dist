@@ -80,7 +80,7 @@ The local Discovery Actor owns aggregation, while NATS supplies bounded broadcas
 | --- | --- |
 | Successful Send | Target generation admitted the message; its handler may still be running |
 | Call returns | Valid final result or definite business error; no rollback implied |
-| Successful Stream | Valid successful termination, consecutive sequences, all chunks consumed and active callback returned |
+| Successful Stream | Valid successful termination, consecutive sequences, all chunks consumed and active loop body returned |
 | Local validation, capacity or explicit pre-publish failure | This business frame was not sent; return the original error |
 | Exact target refuses before mailbox admission | Definite non-admission for this attempt; no transparent retry |
 | Possible send without required ACK, result or termination | ErrOutcomeUnknown plus cancellation, deadline or transport cause |
@@ -97,11 +97,22 @@ Disconnected business messages are neither buffered nor replayed. Applications h
 
 ## Stream
 
-`addr.Stream[C](ctx, msg, yield)` invokes yield serially in order. Missing, duplicate, out-of-order or malformed chunks/termination cannot succeed. Valid business errors are definite failures and may stop queued consumption without undoing consumed data. Without valid termination, ErrOutcomeUnknown remains. Cancellation after valid termination adds no remote uncertainty. Callback errors retain the original Go error, plus uncertainty when terminal evidence is absent.
+`addr.Stream[C](ctx, msg)` returns a lazy, single-use `iter.Seq2[C,error]`. Validation, encoding, generation selection and admission begin on first iteration; keep the input stable until then. Each item is `(chunk,nil)`; successful completion yields no extra item. A valid producer failure drains accepted chunks, then yields one error. Local cancellation, deadline, shutdown, type errors and malformed protocol evidence can interrupt that drain. Missing terminal evidence retains `ErrOutcomeUnknown`.
 
-Every return path joins an active callback. Cancellation/failure starts no further callback, and an observed business/protocol error survives a later timeout during that join. Blocked callbacks retain their window, correlation and Runtime work reservation and prevent Close success; network cancellation can still propagate while they block. Callbacks should return promptly or use captured context for cancellation. Never synchronously wait for the enclosing Stream or Runtime.Close inside a callback.
+```go
+for chunk, err := range addr.Stream[TextChunk](ctx, ask) {
+    if err != nil { return err }
+    if err := save(chunk); err != nil { return err }
+}
+```
 
-Each stream reserves four items/64 KiB encoded payload, including its active callback; a Runtime allows 16 incoming/outgoing streams combined by default (configurable with TransportLimits.Streams). Credit returns only after consumption, using actual encoded bytes. `Responder.WriteConsumed` additionally waits for this acknowledgement. Partial failure never resumes automatically; disconnect cancels existing incoming streams and reconnect does not restore them. Late frames cannot recreate associations or consumers. See the [wire envelope](contract.md#unified-envelope) and [resource table](contract.md#time-and-development-resource-profile) for sequences, window acknowledgements and aggregate budgets.
+Only a normally completed loop body (including `continue`) acknowledges its item. `break`, outer `return` and panic cancel without acknowledging the current item; panic propagates unchanged. An application error returned by the enclosing function belongs to the caller; the producer observes cancellation. Repeated or concurrent iteration reports `actorx.ErrSetup` without dispatching another request.
+
+A blocked loop body retains its window, correlation and Runtime work reservation until it exits, including during cancellation and Close. Use the captured context to cooperate with cancellation; never synchronously wait for the enclosing Stream or Runtime.Close inside its data body. Cleanup and discard occur before an error item is yielded.
+
+Each stream reserves four items/64 KiB encoded payload, including its active body; `TransportLimits.Streams` defaults to 16 incoming/outgoing streams combined. Credit returns only after consumption, using actual encoded bytes. A failed final credit publication preserves the terminal result only after valid terminal evidence and complete local consumption. Partial failure never resumes automatically.
+
+`Responder.WriteConsumed` waits for consumption credit. Its context bounds both admission and receipt waiting: cancellation after acceptance ends the wait without withdrawing the item or releasing consumer capacity. A nil result proves consumption; a context error does not prove whether acceptance or consumption occurred and is not a retry signal. Complete seals production and cancels the request context; an independent write context may still await a late ACK. Pending receipts retain bounded routing until ACK, cancellation, deadline or transport loss. See the [wire envelope](contract.md#unified-envelope) and [resource table](contract.md#time-and-development-resource-profile).
 
 For long streams, use a short `actorx.HandleStream` handler to start `actorx.StartTask(ctx, ...)`. The worker uses snapshots and its task context for I/O or downstream Stream, forwards chunks through `reply.Write`, and the serial completion calls `reply.Complete(err)`. State changes stay in serial handlers/completions, leaving the Actor able to handle ordinary Notify. Obtain Addr/Self before starting the task; workers do not retain distributed context views.
 
@@ -148,7 +159,7 @@ rt, err := actorxdist.NewRuntime(ctx,
 | ExecutionLimits.Pending | 32 | Admitted, unsettled requests per Actor, including Send and Deferred requests |
 | ExecutionLimits.Tasks | 4 | Tasks per Actor until result delivery or discard completes |
 | TransportLimits.Requests | 128 | Outgoing and incoming unsettled network requests, bounded separately; also core business caller and shared reply association capacity |
-| TransportLimits.Streams | 16 | Incoming and outgoing streams combined, including active callbacks |
+| TransportLimits.Streams | 16 | Incoming and outgoing streams combined, including active loop bodies |
 | TransportLimits.ContractCacheTypes | 64 | Logical Type entries in this Runtime's caller contract cache; independent of local registration capacity |
 
 Mailbox capacity is released when work leaves the queue; Pending remains occupied until the request settles. A Deferred handler can return with an empty mailbox while its reply still occupies Pending. StartTask reserves a mailbox completion slot as well as a task slot.

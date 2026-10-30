@@ -33,7 +33,7 @@ chunks: 6
 go run ./examples/chat/consumer -id assistant-42 -consume-delay 100ms
 ```
 
-`-consume-delay` 让每个消费回调保持指定时长。默认六个分片超过四条窗口，继续交付需要归还消费额度。这里演示慢消费；精确窗口限制及取消后的清理由专门的 Stream 测试验证，见[流语义](../../docs/runtime.zh.md#stream)。
+`-consume-delay` 让每个消费循环体保持指定时长。默认六个分片超过四条窗口，继续交付需要归还消费额度。这里演示慢消费；精确窗口限制及取消后的清理由专门的 Stream 测试验证，见[流语义](../../docs/runtime.zh.md#stream)。
 
 consumer 请求的总期限为十秒，Ctrl-C 可取消请求；取消只请求远端工作停止，不证明远端清理已完成。consumer 关闭不停止远端 Assistant；provider 收到 Ctrl-C 后关闭 Runtime 并等待所属工作结束。所有角色都可通过 `-nats nats://SERVER:4222` 选择服务，须连接相同服务/account。
 

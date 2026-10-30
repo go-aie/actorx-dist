@@ -11,6 +11,8 @@ from actorx_remote import (
     OutcomeUnknownError,
     RemoteError,
     Runtime,
+    Stream as ConsumerStream,
+    TransportError,
 )
 from actorx_remote import protocol as p
 from support import ADDRESS, Gateway, Stream, bounded
@@ -27,6 +29,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         self.started = asyncio.Event()
         self.request = None
         self.open_method = "stream/opened"
+        self.dispatches = 0
 
         async def handle(req):
             m = p.envelope(req.content)
@@ -36,6 +39,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertNotIn("X-Actorx-Remote-Session", req.headers)
             if m["method"] == "actor/stream":
+                self.dispatches += 1
                 self.request = m
                 self.wire.send(
                     p.notification(
@@ -79,6 +83,24 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
             p.success(self.request["id"], {"address": ADDRESS, "final_seq": seq})
         )
 
+    def failure(self, seq):
+        error = p.failure(self.request["id"], 1000, actor_address=ADDRESS)
+        error["error"]["data"].update(final_seq=seq, detail="business failure")
+        self.wire.send(error)
+
+    def assert_cleaned(self, stream):
+        self.assertTrue(stream.reader.done())
+        self.assertTrue(stream._close_task.done())
+        self.assertTrue(self.wire.closed.is_set())
+        self.assertNotIn(stream, self.runtime._streams)
+        self.assertFalse(
+            [
+                t
+                for t in asyncio.all_tasks()
+                if t.get_name().startswith("actorx-remote-stream")
+            ]
+        )
+
     async def open(self):
         stream = self.runtime.addr("demo.ping", "session-42").stream(None)
         await stream.__aenter__()
@@ -94,6 +116,86 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(StopAsyncIteration):
             await anext(stream)
 
+    async def test_api_snapshot_and_start_once_on_context_or_iteration(self):
+        message = {"items": [1]}
+        stream = self.runtime.addr("demo.ping", "session-42").stream(message)
+        self.assertIsInstance(stream, ConsumerStream)
+        message["items"].append(2)
+        self.assertIsNone(stream.reader)
+        self.assertFalse(self.runtime._streams)
+        self.assertEqual(self.dispatches, 0)
+
+        self.assertIs(stream.__aiter__(), stream)
+        reader, deadline = stream.reader, stream.deadline
+        self.assertIs(stream.__aiter__(), stream)
+        async with stream as entered:
+            self.assertIs(entered, stream)
+            await bounded(self.started.wait())
+            self.assertEqual(self.request["params"]["input"], {"items": [1]})
+            self.assertIs(stream.reader, reader)
+            self.assertEqual(stream.deadline, deadline)
+            self.final(0)
+            self.assertEqual([v async for v in stream], [])
+        self.assertEqual(self.dispatches, 1)
+
+        self.assert_cleaned(stream)
+
+    async def test_failure_terminal_drains_all_accepted_items(self):
+        stream = await self.open()
+        values = [None, "second", {"third": 3}, [4]]
+        for seq, value in enumerate(values, 1):
+            self.chunk(seq, value)
+        self.failure(4)
+        await bounded(stream.reader)  # terminal precedes all application delivery
+
+        received = []
+        with self.assertRaises(RemoteError) as caught:
+            async for value in stream:
+                received.append(value)
+
+        self.assertEqual(received, values)
+        self.assertEqual(caught.exception.rpc_code, 1000)
+        self.assertEqual(caught.exception.data["detail"], "business failure")
+        self.assertIs(caught.exception, stream.terminal_error)
+
+        for seq in range(1, 5):
+            ack = await bounded(self.controls.get())
+            self.assertEqual(ack["method"], "stream/ack")
+            self.assertEqual(ack["params"]["ack_seq"], seq)
+        self.assertTrue(self.controls.empty())
+        self.assert_cleaned(stream)
+
+        with self.assertRaises(RemoteError) as again:
+            await anext(stream)
+        self.assertIs(again.exception, caught.exception)
+
+    async def test_success_terminal_drains_all_accepted_items(self):
+        stream = await self.open()
+        for seq in range(1, 5):
+            self.chunk(seq, seq)
+        self.final(4)
+        await bounded(stream.reader)
+
+        self.assertEqual([v async for v in stream], [1, 2, 3, 4])
+
+        for seq in range(1, 5):
+            self.assertEqual(
+                (await bounded(self.controls.get()))["params"]["ack_seq"], seq
+            )
+        self.assertTrue(self.controls.empty())
+        self.assert_cleaned(stream)
+
+    async def test_empty_failure_saves_generation_and_cleans_before_error(self):
+        stream = await self.open()
+        self.failure(0)
+        await bounded(stream.reader)
+        with self.assertRaises(RemoteError) as caught:
+            await bounded(anext(stream))
+        self.assertIs(caught.exception, stream.terminal_error)
+        self.assertEqual(stream.addr.address, ADDRESS)
+        self.assertTrue(self.controls.empty())
+        self.assert_cleaned(stream)
+
     async def stalled_ack(self, terminal=None, queued=False):
         stream = await self.open()
         self.chunk(1, "first")
@@ -108,9 +210,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
             if terminal == "success":
                 self.final(2 if queued else 1)
             elif terminal == "error":
-                error = p.failure(self.request["id"], 1000, actor_address=ADDRESS)
-                error["error"]["data"]["final_seq"] = 1
-                self.wire.send(error)
+                self.failure(2 if queued else 1)
             if terminal is not None:
                 await bounded(stream.reader)
             # The ack was handled, but its HTTP response never returns.
@@ -140,7 +240,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(DeadlineExceededError):
             await bounded(anext(stream))
         self.assertTrue(stream.remote_terminal)
-        self.assertEqual(stream.queue.qsize(), 1)
+        self.assertTrue(stream.queue.empty())
         with self.assertRaises(DeadlineExceededError):
             await anext(stream)
 
@@ -149,6 +249,74 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RemoteError) as caught:
             await bounded(anext(stream))
         self.assertEqual(caught.exception.rpc_code, 1000)
+
+    async def test_ack_timeout_cannot_skip_queued_failure(self):
+        stream = await self.stalled_ack("error", queued=True)
+        with self.assertRaises(DeadlineExceededError):
+            await bounded(anext(stream))
+        self.assert_cleaned(stream)
+
+    async def test_expired_budget_aborts_prequeued_failure(self):
+        stream = await self.open()
+        self.chunk(1, "must not be delivered")
+        self.failure(1)
+        await bounded(stream.reader)
+
+        stream.deadline = asyncio.get_running_loop().time() - 1
+        with self.assertRaises(DeadlineExceededError):
+            await anext(stream)
+        self.assertTrue(self.controls.empty())  # no successful consumption ACK
+        self.assert_cleaned(stream)
+
+    async def failed_ack(self, *, terminal, queued):
+        stream = await self.open()
+        self.chunk(1, "first")
+        self.assertEqual(await bounded(anext(stream)), "first")
+        if queued:
+            self.chunk(2, "second")
+        if terminal == "success":
+            self.final(2 if queued else 1)
+        else:
+            self.failure(2 if queued else 1)
+        await bounded(stream.reader)
+
+        async def reply(raw, session):
+            m = p.envelope(raw)
+            self.controls.put_nowait(m)
+            if m["method"] == "stream/ack":
+                raise TransportError("ACK transport failed")
+
+        self.runtime._http.reply = reply
+        return stream
+
+    async def test_last_ack_failure_preserves_success(self):
+        stream = await self.failed_ack(terminal="success", queued=False)
+        with self.assertRaises(StopAsyncIteration):
+            await bounded(anext(stream))
+        self.assert_cleaned(stream)
+
+    async def test_last_ack_failure_preserves_producer_error(self):
+        stream = await self.failed_ack(terminal="error", queued=False)
+        with self.assertRaises(RemoteError) as caught:
+            await bounded(anext(stream))
+        self.assertIs(caught.exception, stream.terminal_error)
+        self.assert_cleaned(stream)
+
+    async def test_ack_failure_aborts_queued_success(self):
+        stream = await self.failed_ack(terminal="success", queued=True)
+        with self.assertRaises(TransportError):
+            await bounded(anext(stream))
+        self.assertEqual((await bounded(self.controls.get()))["method"], "stream/ack")
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assert_cleaned(stream)
+
+    async def test_ack_failure_aborts_queued_producer_error(self):
+        stream = await self.failed_ack(terminal="error", queued=True)
+        with self.assertRaises(TransportError):
+            await bounded(anext(stream))
+        self.assert_cleaned(stream)
 
     async def test_six_items_ack_only_after_processing(self):
         stream = await self.open()
@@ -207,6 +375,7 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         for code in (1002, 1008):
             for final_seq in (None, 1):
                 with self.subTest(code=code, final_seq=final_seq):
+
                     async def handle(req):
                         m = p.envelope(req.content)
                         error = p.failure(m["id"], code)
@@ -234,6 +403,21 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(OutcomeUnknownError):
             await bounded(anext(stream))
         self.assertFalse(self.runtime._streams)
+
+    async def test_bad_evidence_aborts_queue_without_acknowledging_current(self):
+        stream = await self.open()
+        self.chunk(1, "active")
+        self.assertEqual(await bounded(anext(stream)), "active")
+        self.chunk(2, "queued")
+        self.final(3)  # contradicts the accepted sequence
+        await bounded(stream.reader)
+        with self.assertRaises(OutcomeUnknownError):
+            await bounded(anext(stream))
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assertTrue(self.controls.empty())
+        self.assert_cleaned(stream)
 
     async def test_eof_never_success(self):
         stream = await self.open()
@@ -304,7 +488,185 @@ class ConsumerTests(unittest.IsolatedAsyncioTestCase):
             await anext(stream)
         self.assertEqual(caught.exception.rpc_code, 1009)
         self.assertTrue(stream.remote_terminal)
-        self.assertEqual(stream.queue.qsize(), 1)
+        self.assertTrue(stream.queue.empty())
+
+    async def test_break_after_failure_terminal_cancels_without_ack(self):
+        stream = await self.open()
+        self.chunk(1, "active")
+        self.chunk(2, "queued")
+        self.failure(2)
+        await bounded(stream.reader)
+
+        async with stream:
+            async for value in stream:
+                self.assertEqual(value, "active")
+                break
+
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assertTrue(self.controls.empty())
+        with self.assertRaises(RemoteError) as caught:
+            await anext(stream)
+        self.assertEqual(caught.exception.rpc_code, 1009)
+        self.assert_cleaned(stream)
+
+    async def test_business_exception_survives_context_cleanup(self):
+        stream = await self.open()
+        self.chunk(1, "active")
+        error = ValueError("application failure")
+        with self.assertRaises(ValueError) as caught:
+            async with stream:
+                async for _ in stream:
+                    raise error
+        self.assertIs(caught.exception, error)
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assertTrue(self.controls.empty())
+        self.assert_cleaned(stream)
+
+    async def test_cancel_transport_failure_preserves_business_exception(self):
+        stream = await self.open()
+        self.chunk(1, "active")
+
+        async def reject(raw, session):
+            raise TransportError("control transport failed")
+
+        self.runtime._http.reply = reject
+        error = ValueError("application failure")
+        with self.assertRaises(ValueError) as caught:
+            async with stream:
+                async for _ in stream:
+                    raise error
+        self.assertIs(caught.exception, error)
+        self.assert_cleaned(stream)
+
+    async def test_direct_anext_and_explicit_close(self):
+        stream = self.runtime.addr("demo.ping", "session-42").stream(None)
+        first = asyncio.create_task(anext(stream))
+        await bounded(self.started.wait())
+        self.chunk(1, "active")
+        self.assertEqual(await bounded(first), "active")
+        await bounded(stream.aclose())
+        self.assertEqual(self.dispatches, 1)
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assertTrue(self.controls.empty())
+        self.assert_cleaned(stream)
+
+    async def test_task_cancel_while_waiting_for_data(self):
+        stream = await self.open()
+        waiting = asyncio.create_task(anext(stream))
+        await asyncio.sleep(0)
+        waiting.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await bounded(waiting)
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assert_cleaned(stream)
+
+    async def test_task_cancel_in_loop_body_survives_context_cleanup(self):
+        stream = await self.open()
+        self.chunk(1, "active")
+        entered = asyncio.Event()
+
+        async def consume():
+            async with stream:
+                async for _ in stream:
+                    entered.set()
+                    await asyncio.Event().wait()
+
+        consumer = asyncio.create_task(consume())
+        await bounded(entered.wait())
+        consumer.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await bounded(consumer)
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assertTrue(self.controls.empty())
+        self.assert_cleaned(stream)
+
+    async def test_runtime_close_does_not_finish_application_body(self):
+        stream = await self.open()
+        self.chunk(1, "active")
+        self.final(1)
+        await bounded(stream.reader)
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def consume():
+            async with stream:
+                async for _ in stream:
+                    entered.set()
+                    await release.wait()
+                    break
+
+        consumer = asyncio.create_task(consume())
+        try:
+            await bounded(entered.wait())
+            await bounded(self.runtime.close())
+            self.assertFalse(consumer.done())
+            self.assertEqual(
+                (await bounded(self.controls.get()))["method"], "stream/cancel"
+            )
+            self.assertTrue(self.controls.empty())
+            self.assert_cleaned(stream)
+        finally:
+            release.set()
+            await bounded(consumer)
+
+    async def test_runtime_close_joins_stalled_ack(self):
+        stream = await self.open()
+        self.chunk(1, "first")
+        self.assertEqual(await bounded(anext(stream)), "first")
+        entered, stopped = asyncio.Event(), asyncio.Event()
+        original = self.runtime._http.reply
+
+        async def reply(raw, session):
+            if p.envelope(raw)["method"] != "stream/ack":
+                return await original(raw, session)
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        self.runtime._http.reply = reply
+        waiting = asyncio.create_task(anext(stream))
+        await bounded(entered.wait())
+        await bounded(self.runtime.close())
+        self.assertTrue(stopped.is_set())
+        with self.assertRaises(RemoteError) as caught:
+            await bounded(waiting)
+        self.assertEqual(caught.exception.rpc_code, 1009)
+        self.assert_cleaned(stream)
+
+    async def test_caller_cancel_during_ack_is_not_a_local_close_error(self):
+        stream = await self.open()
+        self.chunk(1, "first")
+        self.assertEqual(await bounded(anext(stream)), "first")
+        entered = asyncio.Event()
+        original = self.runtime._http.reply
+
+        async def reply(raw, session):
+            if p.envelope(raw)["method"] != "stream/ack":
+                return await original(raw, session)
+            entered.set()
+            await asyncio.Event().wait()
+
+        self.runtime._http.reply = reply
+        waiting = asyncio.create_task(anext(stream))
+        await bounded(entered.wait())
+        waiting.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await bounded(waiting)
+        self.assertEqual(
+            (await bounded(self.controls.get()))["method"], "stream/cancel"
+        )
+        self.assert_cleaned(stream)
 
     async def test_close_cannot_skip_delivered_last_item(self):
         stream = await self.open()
@@ -393,7 +755,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
                     if value == "hold":
                         await hold.wait()
                     for i in range(6):
-                        yield i
+                        yield {"seq": i, "pad": "x" * 7000}
                 finally:
                     stopped.set()
 
@@ -458,17 +820,33 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
                 gateway.stream.send(p.notification(method, params))
 
             invoke("r:2", None)
+            registration = runtime._registrations["demo.ping"]
+            total_bytes = 0
             for i in range(1, 5):
-                self.assertEqual((await bounded(chunks.get()))["params"]["seq"], i)
+                chunk = await bounded(chunks.get())
+                self.assertEqual(chunk["params"]["seq"], i)
+                self.assertEqual(
+                    chunk["params"]["value"], {"seq": i - 1, "pad": "x" * 7000}
+                )
+                size = len(p.encode(chunk))
+                self.assertLessEqual(size, p.MAX_BYTES)
+                self.assertEqual(registration.streams["r:2"].sizes[i], size)
+                total_bytes += size
+
+            # Legal large envelopes fill most of the window, including headers.
+            self.assertGreater(total_bytes, 4 * 7000)
+            self.assertLessEqual(total_bytes, WINDOW["bytes"])
 
             # An event loop barrier lets the sender reach the full-window wait.
             await asyncio.sleep(0)
             self.assertTrue(chunks.empty())
 
             # Retired control names cannot release credit or cancel live work.
-            registration = runtime._registrations["demo.ping"]
             ledger = registration.streams["r:2"]
-            for method, extra in (("actor/credit", {"ack_seq": 2}), ("actor/cancel", {})):
+            for method, extra in (
+                ("actor/credit", {"ack_seq": 2}),
+                ("actor/cancel", {}),
+            ):
                 await registration.dispatch(
                     p.notification(
                         method, {"request_id": "r:2", "stream_token": TOKEN, **extra}

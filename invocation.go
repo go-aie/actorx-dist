@@ -92,16 +92,31 @@ func takeSlot(slots chan struct{}) bool {
 	}
 }
 
-func (n *network) invokeBusiness(
-	parent context.Context,
-	addr Addr,
-	kind actorx.Kind,
-	msg any,
-	result reflect.Type,
-	yield func(any) error,
-) (any, error) {
+type businessInvocation struct {
+	ctx     context.Context
+	frame   businessFrame
+	replies chan *nats.Msg
+	stream  *receiveStream
+	release func()
+}
+
+// openBusiness owns admission until publication succeeds, then transfers all
+// request resources to the Call/Send operation or the Stream iterator.
+func (n *network) openBusiness(parent context.Context, addr Addr, kind actorx.Kind, msg any, result reflect.Type) (*businessInvocation, error) {
 	ctx, cancel := requestBudget(parent)
-	defer cancel()
+	cleanup := []func(){cancel}
+	opened := false
+	release := func() {
+		for i := len(cleanup) - 1; i >= 0; i-- {
+			cleanup[i]()
+		}
+	}
+	defer func() {
+		if !opened {
+			release()
+		}
+	}()
+
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -114,12 +129,12 @@ func (n *network) invokeBusiness(
 	}
 	n.rt.work.Add(1)
 	n.rt.mu.Unlock()
-	defer n.rt.work.Done()
+	cleanup = append(cleanup, n.rt.work.Done)
 	if kind == actorx.StreamKind {
 		if !n.reserveStream() {
 			return nil, actorx.ErrFull
 		}
-		defer n.releaseStream()
+		cleanup = append(cleanup, n.releaseStream)
 	}
 
 	n.businessMu.Lock()
@@ -132,14 +147,14 @@ func (n *network) invokeBusiness(
 		n.acks++
 	}
 	n.businessMu.Unlock()
-	defer func() {
+	cleanup = append(cleanup, func() {
 		n.businessMu.Lock()
 		n.outgoing--
 		if kind == actorx.SendKind {
 			n.acks--
 		}
 		n.businessMu.Unlock()
-	}()
+	})
 
 	// Bound encoding scratch separately from the request and reply lifetimes.
 	if !takeSlot(n.payloadSlots) {
@@ -186,7 +201,7 @@ func (n *network) invokeBusiness(
 	if err != nil {
 		return nil, err
 	}
-	defer n.releaseReply(correlation)
+	cleanup = append(cleanup, func() { n.releaseReply(correlation) })
 	mode := "call"
 	if kind == actorx.StreamKind {
 		mode = "stream"
@@ -216,7 +231,7 @@ func (n *network) invokeBusiness(
 	var stream *receiveStream
 	if kind == actorx.StreamKind {
 		f.Items, f.Bytes = streamItems, streamBytes
-		stream = newReceiveStream(n, ctx, f, result, yield)
+		stream = newReceiveStream(n, ctx, f, result)
 		n.rpcMu.Lock()
 		n.streamReplies[correlation] = stream
 		n.rpcMu.Unlock()
@@ -260,22 +275,51 @@ func (n *network) invokeBusiness(
 	<-n.payloadSlots
 	held = false
 
-	// After a publish attempt, loss of the final response leaves the outcome unknown.
+	if err != nil {
+		if kind != actorx.SendKind {
+			n.cancelBusiness(f, err)
+		}
+		return nil, errors.Join(ErrOutcomeUnknown, err)
+	}
+	opened = true
+	return &businessInvocation{
+		ctx:     ctx,
+		frame:   f,
+		replies: ch,
+		stream:  stream,
+		release: release,
+	}, nil
+}
+
+func (n *network) openStream(ctx context.Context, addr Addr, msg any, result reflect.Type) (*receiveStream, error) {
+	request, err := n.openBusiness(ctx, addr, actorx.StreamKind, msg, result)
+	if err != nil {
+		return nil, err
+	}
+
+	// The iterator now owns admission resources and joins the monitor on close.
+	request.stream.release = request.release
+	request.stream.startMonitor()
+	return request.stream, nil
+}
+
+func (n *network) invokeBusiness(parent context.Context, addr Addr, kind actorx.Kind, msg any, result reflect.Type) (any, error) {
+	if kind != actorx.SendKind && kind != actorx.CallKind {
+		return nil, actorx.ErrMode
+	}
+
+	request, err := n.openBusiness(parent, addr, kind, msg, result)
+	if err != nil {
+		return nil, err
+	}
+	defer request.release()
+	ctx, f, ch := request.ctx, request.frame, request.replies
+
 	unknown := func(cause error) (any, error) {
 		if kind != actorx.SendKind {
 			n.cancelBusiness(f, cause)
 		}
 		return nil, errors.Join(ErrOutcomeUnknown, cause)
-	}
-	if err != nil {
-		return unknown(err)
-	}
-	if stream != nil {
-		err := stream.run()
-		if err != nil {
-			stream.cancelRemote(err)
-		}
-		return nil, err
 	}
 
 	ticker := time.NewTicker(20 * time.Millisecond)
@@ -419,7 +463,11 @@ func (n *network) handleBusiness(in incoming) {
 		p := n.leases[key]
 		n.businessMu.Unlock()
 		if p != nil && p.f.matches(f) {
-			p.cancel()
+			if p.stream != nil {
+				p.stream.abort(context.Canceled)
+			} else {
+				p.cancel()
+			}
 		}
 		return
 	}
@@ -557,12 +605,17 @@ func (n *network) handleBusiness(in incoming) {
 	n.businessMu.Unlock()
 	if err != nil {
 		if p.stream != nil {
+			p.stream.settleCancel()
 			n.releaseStream()
 			n.rt.work.Done()
 		}
 		cancel()
 		reject(err)
 		return
+	}
+
+	if p.stream != nil {
+		p.stream.monitor()
 	}
 
 	// Receive and Deferred completion remain exclusively in actorx. This lease
@@ -613,12 +666,10 @@ func (p *businessReply) finish(value any, err error, rejected bool) bool {
 			p.n.respondBusiness(p.f, value, err, rejected)
 		}
 
-		p.n.businessMu.Lock()
-		delete(p.n.leases, p.key)
-		p.n.businessMu.Unlock()
-		if p.stream != nil {
-			p.n.releaseStream()
-			p.n.rt.work.Done()
+		if p.stream == nil {
+			p.n.businessMu.Lock()
+			delete(p.n.leases, p.key)
+			p.n.businessMu.Unlock()
 		}
 	})
 	return won

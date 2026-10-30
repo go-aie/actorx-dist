@@ -1,5 +1,5 @@
-github.com/go-aie/actorx v0.0.0-20261028052700-63f7d0afd6bd h1:AavoSRpb6NQIwDwELWGpuGl+Xk64V7aKIYtjfYukm6w=
-github.com/go-aie/actorx v0.0.0-20261028052700-63f7d0afd6bd/go.mod h1:WCEYnG6W33IS82AdcKBzhCpRN6J0NSVacCnRANALHrc=
+github.com/go-aie/actorx v0.0.0-20261030042159-66d1a455bafa h1:Snvtf4FhtWMWrdirZqo5451adsulVeR48/BoE1dtkvo=
+github.com/go-aie/actorx v0.0.0-20261030042159-66d1a455bafa/go.mod h1:WCEYnG6W33IS82AdcKBzhCpRN6J0NSVacCnRANALHrc=
 github.com/klauspost/compress v1.17.2 h1:RlWWUY/Dr4fL8qk9YG7DTZ7PDgME2V4csBXA8L/ixi4=
 github.com/klauspost/compress v1.17.2/go.mod h1:ntbaceVETuRiXiv4DpjP66DpAtAGkEQskQzEyD//IeE=
 github.com/nats-io/nats.go v1.36.0 h1:suEUPuWzTSse/XhESwqLxXGuj8vGRuPRoG7MoRN/qyU=

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"testing"
 
 	"github.com/go-aie/actorx"
@@ -33,7 +34,7 @@ func TestUnifiedProxyBusyAdmission(t *testing.T) {
 		done := make(chan error, 1)
 		go func() {
 			if stream {
-				done <- addr.Stream[protocol.Chunk](testCtx(t), streamInput("active"), func(protocol.Chunk) error { return nil })
+				done <- streamError(addr.Stream[protocol.Chunk](testCtx(t), streamInput("active")))
 			} else {
 				_, err := addr.Call[protocol.Result](testCtx(t), input("active"))
 				done <- err
@@ -45,7 +46,7 @@ func TestUnifiedProxyBusyAdmission(t *testing.T) {
 		if stream {
 			_, err = addr.Call[protocol.Result](testCtx(t), input("overlap"))
 		} else {
-			err = addr.Stream[protocol.Chunk](testCtx(t), streamInput("overlap"), func(protocol.Chunk) error { return nil })
+			err = streamError(addr.Stream[protocol.Chunk](testCtx(t), streamInput("overlap")))
 		}
 		if !errors.Is(err, actorx.ErrFull) {
 			t.Fatalf("stream=%t overlap: %v", stream, err)
@@ -86,17 +87,23 @@ func TestUnsupportedOperationEvidenceAndOtherOperation(t *testing.T) {
 					<-release
 					return fixed, protocol.Result{}, late
 				}
-				g.backend.stream = func(ctx context.Context, _ protocol.Address, in protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
-					err := r.session.invokeStream(ctx, fixed, in, func(c protocol.Chunk) error { return yield(fixed, c) })
-					if !stream {
-						return fixed, err
+				g.backend.stream = func(ctx context.Context, a *protocol.Address, in protocol.InvokeStream) iter.Seq2[protocol.Chunk, error] {
+					return func(yield func(protocol.Chunk, error) bool) {
+						*a = fixed
+						err := streamError(r.session.invokeStream(ctx, fixed, in))
+						if !stream {
+							if err != nil {
+								yield(protocol.Chunk{}, err)
+							}
+							return
+						}
+						if !errors.Is(err, errProviderStream) {
+							t.Error("missing retained Stream failure", err)
+						}
+						close(settled)
+						<-release
+						yield(protocol.Chunk{}, late)
 					}
-					if !errors.Is(err, errProviderStream) {
-						t.Error("missing retained Stream failure", err)
-					}
-					close(settled)
-					<-release
-					return fixed, late
 				}
 				ctx, cancel := context.WithCancel(testCtx(t))
 				defer cancel()
@@ -111,10 +118,13 @@ func TestUnsupportedOperationEvidenceAndOtherOperation(t *testing.T) {
 					ch := make(chan protocol.Message, 1)
 					terminal = ch
 					go func() {
-						ch <- s.Run(func(protocol.Message) error {
-							t.Error("unsupported Stream emitted a chunk")
-							return nil
-						})
+						for m := range s.Messages() {
+							if m.Method == protocol.ChunkMethod {
+								t.Error("unsupported Stream emitted a chunk")
+							} else {
+								ch <- m
+							}
+						}
 					}()
 				} else {
 					done = startCall(g, ctx, cold)
@@ -176,7 +186,8 @@ func TestUnsupportedOperationEvidenceAndOtherOperation(t *testing.T) {
 				} else {
 					again := make(chan error, 1)
 					go func() {
-						result, err := g.Stream(testCtx(t), protocol.CallParams{Address: fixed, Input: json.RawMessage("null")}, func(protocol.Address, json.RawMessage) error { return nil })
+						result := protocol.StreamResult{Address: fixed}
+						err := streamError(g.stream(testCtx(t), protocol.CallParams{Address: fixed, Input: json.RawMessage("null")}, &result))
 						if result.Address != fixed {
 							t.Error("Stream lost fixed address", result)
 						}
@@ -208,10 +219,11 @@ func TestGatewaySharedOperationCapacity(t *testing.T) {
 		<-release
 		return a, protocol.NewResult(json.RawMessage("null"), nil), nil
 	}
-	g.backend.stream = func(_ context.Context, a protocol.Address, _ protocol.InvokeStream, _ func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
-		entered <- struct{}{}
-		<-release
-		return a, nil
+	g.backend.stream = func(_ context.Context, a *protocol.Address, _ protocol.InvokeStream) iter.Seq2[protocol.Chunk, error] {
+		return func(func(protocol.Chunk, error) bool) {
+			entered <- struct{}{}
+			<-release
+		}
 	}
 	done := make(chan error, protocol.Capacity)
 	request := protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")}
@@ -221,7 +233,7 @@ func TestGatewaySharedOperationCapacity(t *testing.T) {
 			if i%2 == 0 {
 				_, err = g.Call(testCtx(t), request)
 			} else {
-				_, err = g.Stream(testCtx(t), request, func(protocol.Address, json.RawMessage) error { return nil })
+				err = streamError(g.Stream(testCtx(t), request))
 			}
 			done <- err
 		}()
@@ -232,7 +244,7 @@ func TestGatewaySharedOperationCapacity(t *testing.T) {
 
 	_, err := g.Call(testCtx(t), request)
 	rpcCode(t, err, protocol.Full)
-	_, err = g.Stream(testCtx(t), request, func(protocol.Address, json.RawMessage) error { return nil })
+	err = streamError(g.Stream(testCtx(t), request))
 	rpcCode(t, err, protocol.Full)
 
 	// Release workers and join them before the registration's cleanup runs.

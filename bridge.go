@@ -16,7 +16,6 @@ func invokeLocal(
 	kind actorx.Kind,
 	msg any,
 	result reflect.Type,
-	yield func(any) error,
 ) (any, error) {
 	var selected *actorx.CallDescriptor
 	for i := range descriptions {
@@ -42,11 +41,6 @@ func invokeLocal(
 		return nil, local.Send(ctx, msg)
 	case actorx.CallKind:
 		return local.Call[any](ctx, msg)
-	case actorx.StreamKind:
-		if yield == nil {
-			return nil, actorx.ErrSetup
-		}
-		return nil, local.Stream[any](ctx, msg, yield)
 	default:
 		return nil, actorx.ErrMode
 	}

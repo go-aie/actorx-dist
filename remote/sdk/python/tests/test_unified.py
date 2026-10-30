@@ -70,6 +70,181 @@ async def exchange(registration, posts, method, rpc_id, value=None, **kw):
 
 
 class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_success_and_failure_close_generator_then_retain_ack_ledger(self):
+        for failing in (False, True):
+            with self.subTest(failing=failing):
+                closed = asyncio.Event()
+
+                class Actor:
+                    async def handle(self, value):
+                        return value
+
+                    async def handle_stream(self, value):
+                        try:
+                            yield "first"
+                            yield "second"
+                            if failing:
+                                raise ValueError("business failure")
+                        finally:
+                            closed.set()
+
+                async with provider(Actor) as (_, reg, posts):
+                    await exchange(reg, posts, "actor/create", "r:1")
+                    terminal, chunks = await exchange(reg, posts, "actor/stream", "r:2")
+                    self.assertTrue(closed.is_set())
+                    self.assertEqual(chunks, ["first", "second"])
+                    final = terminal["error"]["data"] if failing else terminal["result"]
+                    self.assertEqual(final["final_seq"], 2)
+                    if failing:
+                        self.assertEqual(terminal["error"]["code"], 1000)
+
+                    ledger = reg.streams["r:2"]
+                    original_terminal = ledger.work.terminal
+                    await bounded(ledger.work.job)
+                    self.assertFalse(reg.active)
+                    self.assertEqual(len(ledger.sizes), 2)
+                    with self.assertRaises(asyncio.CancelledError):
+                        await ledger.send("after completion")
+
+                    # Execution capacity is reusable while consumption receipts
+                    # remain outstanding, for successful and failed producers.
+                    call, _ = await exchange(
+                        reg, posts, "actor/call", "r:3", "still usable"
+                    )
+                    self.assertEqual(call["result"]["value"], "still usable")
+
+                    # A late cancel preserves the terminal and outstanding ledger.
+                    await reg.dispatch(
+                        p.notification(
+                            "stream/cancel",
+                            {"request_id": "r:2", "stream_token": TOKEN},
+                        )
+                    )
+                    self.assertIs(ledger.work.terminal, original_terminal)
+                    self.assertEqual(ledger.work.terminal, terminal)
+                    self.assertEqual(len(ledger.sizes), 2)
+
+                    await reg.dispatch(
+                        p.notification(
+                            "stream/ack",
+                            {"request_id": "r:2", "stream_token": TOKEN, "ack_seq": 2},
+                        )
+                    )
+                    self.assertNotIn("r:2", reg.streams)
+                    self.assertFalse(ledger.sizes)
+                    self.assertTrue(posts.empty())
+
+    async def test_canceled_generator_cannot_send_after_suppressing_cancellation(self):
+        entered, closed = asyncio.Event(), asyncio.Event()
+
+        class Actor:
+            async def handle(self, value):
+                return value
+
+            async def handle_stream(self, value):
+                try:
+                    yield "first"
+                    entered.set()
+                    try:
+                        await asyncio.Event().wait()
+                    except asyncio.CancelledError:
+                        yield "must not be sent"
+                finally:
+                    closed.set()
+
+        async with provider(Actor) as (_, reg, posts):
+            await exchange(reg, posts, "actor/create", "r:1")
+            await dispatch(reg, "actor/stream", "r:2")
+            self.assertEqual((await bounded(posts.get()))["params"]["value"], "first")
+            await bounded(entered.wait())
+
+            ledger = reg.streams["r:2"]
+            await reg.dispatch(
+                p.notification(
+                    "stream/cancel", {"request_id": "r:2", "stream_token": TOKEN}
+                )
+            )
+            terminal = await bounded(posts.get())
+            self.assertEqual(terminal["error"]["code"], 1004)
+            self.assertEqual(terminal["error"]["data"]["final_seq"], 1)
+            await bounded(ledger.work.job)
+            self.assertTrue(closed.is_set())
+            self.assertTrue(posts.empty())
+
+            call, _ = await exchange(reg, posts, "actor/call", "r:3", "still usable")
+            self.assertEqual(call["result"]["value"], "still usable")
+
+    async def test_full_window_cleanup_retains_execution_until_generator_exits(self):
+        for stop in ("cancel", "timeout", "runtime-close"):
+            with self.subTest(stop=stop):
+                closing = asyncio.Event()
+                release = asyncio.Event()
+                called = asyncio.Event()
+
+                class Actor:
+                    async def handle(self, value):
+                        called.set()
+                        return value
+
+                    async def handle_stream(self, value):
+                        try:
+                            for i in range(6):
+                                yield i
+                        finally:
+                            closing.set()
+                            await release.wait()
+
+                async with provider(Actor) as (runtime, reg, posts):
+                    await exchange(reg, posts, "actor/create", "r:1")
+                    await dispatch(
+                        reg,
+                        "actor/stream",
+                        "r:2",
+                        ms=150 if stop == "timeout" else 5000,
+                    )
+                    ledger = reg.streams["r:2"]
+                    closer = None
+                    try:
+                        for seq in range(1, 5):
+                            chunk = await bounded(posts.get())
+                            self.assertEqual(chunk["params"]["seq"], seq)
+                            self.assertEqual(ledger.sizes[seq], len(p.encode(chunk)))
+                        await asyncio.sleep(0)  # sender waits for window credit
+                        self.assertTrue(posts.empty())
+                        self.assertEqual(len(ledger.sizes), 4)
+                        if stop == "runtime-close":
+                            closer = asyncio.create_task(runtime.close())
+                        elif stop == "cancel":
+                            await reg.dispatch(
+                                p.notification(
+                                    "stream/cancel",
+                                    {"request_id": "r:2", "stream_token": TOKEN},
+                                )
+                            )
+                        await bounded(closing.wait())
+                        self.assertIn(ledger.work, reg.active)
+                        self.assertFalse(ledger.work.operation.done())
+                        instance = reg.instances[
+                            (ADDRESS["type"], ADDRESS["id"], ADDRESS["generation"])
+                        ]
+                        self.assertTrue(instance.lock.locked())
+                        if closer is not None:
+                            self.assertFalse(closer.done())
+                        else:
+                            await dispatch(reg, "actor/call", "r:3", "after cleanup")
+                            await asyncio.sleep(0)
+                            self.assertFalse(called.is_set())
+                    finally:
+                        ledger.work.cancel_operation()
+                        release.set()
+                        await bounded(ledger.work.job)
+                        if closer is not None:
+                            await bounded(closer)
+                    self.assertNotIn(ledger.work, reg.active)
+                    if closer is None:
+                        await bounded(called.wait())
+                    self.assertEqual(ledger.seq, 4)  # no fifth item was sent
+
     async def test_finished_stream_ledgers_have_separate_capacity(self):
         entered = []
 
@@ -182,9 +357,9 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                             ("actor/call", "actor/stream", "actor/call")
                         ):
                             m, chunks = await exchange(reg, posts, method, f"r:{n + 3}")
-                            missing = (
-                                method == "actor/call" and mode == "stream"
-                            ) or (method == "actor/stream" and mode == "call")
+                            missing = (method == "actor/call" and mode == "stream") or (
+                                method == "actor/stream" and mode == "call"
+                            )
                             if missing:
                                 self.assertEqual(m["error"]["code"], 1013)
                                 self.assertEqual(m["error"]["data"]["address"], ADDRESS)
@@ -290,12 +465,18 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
             m, _ = await exchange(reg, posts, "actor/call", "r:2", "ok")
             self.assertEqual(m["result"]["value"], "ok")
             for n, value in enumerate(("wrong", "error", "non-json")):
-                m, _ = await exchange(
-                    reg, posts, "actor/call", f"r:{n + 3}", value
-                )
+                m, _ = await exchange(reg, posts, "actor/call", f"r:{n + 3}", value)
                 self.assertEqual(m["error"]["code"], 1000)
             for n, value in enumerate(
-                ("wrong", "coroutine", "error", "non-json", "partial", "custom", "empty")
+                (
+                    "wrong",
+                    "coroutine",
+                    "error",
+                    "non-json",
+                    "partial",
+                    "custom",
+                    "empty",
+                )
             ):
                 m, chunks = await exchange(
                     reg, posts, "actor/stream", f"r:{n + 6}", value
@@ -346,9 +527,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         await exchange(reg, posts, "actor/create", "r:1")
                         await dispatch(reg, first_method, "r:2", "first", ms=50)
                         await bounded(entered.wait())
-                        first = next(
-                            w for w in reg.active if w.message["id"] == "r:2"
-                        )
+                        first = next(w for w in reg.active if w.message["id"] == "r:2")
                         other = (
                             "actor/call"
                             if first_method.endswith("stream")
@@ -408,9 +587,7 @@ class UnifiedProviderTests(unittest.IsolatedAsyncioTestCase):
                         reg.instances[
                             (ADDRESS["type"], ADDRESS["id"], ADDRESS["generation"])
                         ].actor.handle_stream = None
-                        m, _ = await exchange(
-                            reg, posts, "actor/stream", "r:12"
-                        )
+                        m, _ = await exchange(reg, posts, "actor/stream", "r:12")
                         self.assertEqual(m["error"]["code"], 1013)
                         await reg.dispatch(
                             p.notification(

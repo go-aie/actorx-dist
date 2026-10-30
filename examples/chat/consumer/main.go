@@ -54,13 +54,16 @@ func run(url, id string, delay time.Duration) (result error) {
 		return err
 	}
 	chunks := 0
-	if err := a.Stream[chat.TextChunk](ctx, chat.Ask{Topic: "Actors"}, func(chunk chat.TextChunk) error {
+	for chunk, err := range a.Stream[chat.TextChunk](ctx, chat.Ask{Topic: "Actors"}) {
+		if err != nil {
+			return err
+		}
 		if _, err := fmt.Print(chunk.Text); err != nil {
 			return err
 		}
 		chunks++
 		if delay > 0 {
-			// A chunk remains unconsumed until this callback returns.
+			// A chunk remains unconsumed until this loop body returns.
 			timer := time.NewTimer(delay)
 			defer timer.Stop()
 			select {
@@ -69,9 +72,6 @@ func run(url, id string, delay time.Duration) (result error) {
 				return ctx.Err()
 			}
 		}
-		return nil
-	}); err != nil {
-		return err
 	}
 	_, err = fmt.Printf("\nchunks: %d\n", chunks)
 	return err

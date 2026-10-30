@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"iter"
+	"sync"
 	"testing"
 
+	"github.com/go-aie/actorx"
 	"github.com/go-aie/actorx-dist"
 	"github.com/go-aie/actorx-dist/remote/protocol"
 )
@@ -24,7 +28,20 @@ func streamRequest(t *testing.T, s *session, write func(protocol.Chunk) error) (
 	s.track("stream")
 	done := make(chan error, 1)
 	ctx := testCtx(t)
-	go func() { done <- s.invokeStream(ctx, testAddress("one"), streamInput("stream"), write) }()
+	go func() {
+		var result error
+		for c, err := range s.invokeStream(ctx, testAddress("one"), streamInput("stream")) {
+			if err != nil {
+				result = err
+				break
+			}
+			if err := write(c); err != nil {
+				result = err
+				break
+			}
+		}
+		done <- result
+	}()
 	m := await(t, s.events)
 	if m.Method != protocol.Stream || string(m.ID) == `"stream"` {
 		t.Fatal("invalid provider stream method or correlation", m)
@@ -116,10 +133,7 @@ func TestProviderStreamWindowAndTerminal(t *testing.T) {
 func TestProviderStreamFinalCreditFailureKeepsDeliveredSuccess(t *testing.T) {
 	for _, mode := range []string{"session-closed", "queue-full", "missing-terminal", "queued", "write-failure"} {
 		t.Run(mode, func(t *testing.T) {
-			g, r := fakeGateway(t, nil)
-			g.backend.stream = func(ctx context.Context, a protocol.Address, in protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
-				return a, r.session.invokeStream(ctx, a, in, func(c protocol.Chunk) error { return yield(a, c) })
-			}
+			g, r := fakeStreamGateway(t)
 			entered, release := make(chan struct{}), make(chan struct{})
 			t.Cleanup(func() {
 				select {
@@ -130,16 +144,23 @@ func TestProviderStreamFinalCreditFailureKeepsDeliveredSuccess(t *testing.T) {
 			})
 			done := make(chan error, 1)
 			go func() {
-				_, err := g.Stream(testCtx(t), protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")}, func(protocol.Address, json.RawMessage) error {
+				var result error
+				for _, err := range g.Stream(testCtx(t), protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")}) {
+					if err != nil {
+						result = err
+						break
+					}
 					close(entered)
 					<-release
 					if mode == "write-failure" {
-						return errors.New("local delivery failed")
+						result = errors.New("local delivery failed")
+						break
 					}
-					return nil
-				})
-				done <- err
+				}
+
+				done <- result
 			}()
+
 			m := await(t, r.Events())
 			if err := acceptTestChunk(r.session, providerChunkMessage(m, 1)); err != nil {
 				t.Fatal(err)
@@ -191,10 +212,17 @@ func TestProviderStreamInvalidAndEmpty(t *testing.T) {
 			s.track("stream")
 			done := make(chan error, 1)
 			go func() {
-				done <- s.invokeStream(ctx, testAddress("one"), streamInput("stream"), func(protocol.Chunk) error {
+				var result error
+				for _, err := range s.invokeStream(ctx, testAddress("one"), streamInput("stream")) {
+					if err != nil {
+						result = err
+						break
+					}
 					<-ctx.Done()
-					return ctx.Err()
-				})
+					result = ctx.Err()
+					break
+				}
+				done <- result
 			}()
 			m := await(t, s.events)
 			if mode == "empty" {
@@ -300,13 +328,11 @@ func stringID(raw []byte) string {
 
 func TestConsumerControlCorrelationAndConsumption(t *testing.T) {
 	g, _ := fakeGateway(t, nil)
-	g.backend.stream = func(ctx context.Context, a protocol.Address, in protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
-		a = testAddress(a.ID)
-		return a, yield(a, protocol.Chunk{
-			MessageType: "json",
-			ContentType: "application/json",
-			Content:     "null",
-		})
+	g.backend.stream = func(ctx context.Context, a *protocol.Address, in protocol.InvokeStream) iter.Seq2[protocol.Chunk, error] {
+		return func(yield func(protocol.Chunk, error) bool) {
+			*a = testAddress(a.ID)
+			yield(protocol.Chunk{MessageType: "json", ContentType: "application/json", Content: "null"}, nil)
+		}
 	}
 	s, err := g.OpenStream(testCtx(t), json.RawMessage(`null`), protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")})
 	if err != nil {
@@ -315,10 +341,13 @@ func TestConsumerControlCorrelationAndConsumption(t *testing.T) {
 	chunks := make(chan protocol.Message, 1)
 	done := make(chan protocol.Message, 1)
 	go func() {
-		done <- s.Run(func(m protocol.Message) error {
-			chunks <- m
-			return nil
-		})
+		for m := range s.Messages() {
+			if m.Method == protocol.ChunkMethod {
+				chunks <- m
+			} else {
+				done <- m
+			}
+		}
 	}()
 	chunk := await(t, chunks)
 	if chunk.Method != protocol.ChunkMethod {
@@ -417,4 +446,241 @@ func TestProviderChunkAccountsOriginalEncoding(t *testing.T) {
 	r.session.close()
 	close(release)
 	_ = await(t, done)
+}
+
+func streamError[T any](seq iter.Seq2[T, error]) error {
+	for _, err := range seq {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func fakeStreamGateway(t *testing.T) (*Gateway, *Registration) {
+	t.Helper()
+	g, r := fakeGateway(t, nil)
+	g.backend.stream = func(ctx context.Context, a *protocol.Address, in protocol.InvokeStream) iter.Seq2[protocol.Chunk, error] {
+		return r.session.invokeStream(ctx, *a, in)
+	}
+	return g, r
+}
+
+func TestGatewayIteratorTerminalDrain(t *testing.T) {
+	for _, mode := range []string{"success", "failure", "final-ack-failure"} {
+		t.Run(mode, func(t *testing.T) {
+			g, r := fakeStreamGateway(t)
+			entered, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			defer unblock()
+			seq := g.Stream(testCtx(t), protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")})
+			if g.active != 0 {
+				t.Fatal("eager admission")
+			}
+
+			select {
+			case event := <-r.Events():
+				t.Fatal("eager provider dispatch", event)
+			default:
+			}
+			count := 0
+			done := make(chan error, 1)
+			go func() {
+				for _, err := range seq {
+					if err != nil {
+						// Error bodies may join cleanup: the scope must already be closed.
+						g.mu.Lock()
+						active := g.active
+						g.mu.Unlock()
+						r.session.mu.Lock()
+						pending := len(r.session.streams)
+						r.session.mu.Unlock()
+						if active != 0 || pending != 0 {
+							err = errors.New("error yielded before cleanup")
+						}
+						done <- err
+						return
+					}
+					count++
+					if count == 1 {
+						close(entered)
+						<-release
+					}
+				}
+				done <- nil
+			}()
+
+			m := await(t, r.Events())
+			for i := uint64(1); i <= 4; i++ {
+				if err := acceptTestChunk(r.session, providerChunkMessage(m, i)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			await(t, entered)
+			terminal := protocol.Success(m.ID, protocol.StreamResult{Address: testAddress("one"), FinalSeq: 4})
+			if mode != "success" {
+				a := testAddress("one")
+				terminal = protocol.ErrorResponse(m.ID, protocol.StreamError(protocol.NewError(protocol.RemoteError, "retained business error", &a), 4))
+			}
+			if err := r.session.accept(terminal); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "final-ack-failure" {
+				// Leave room for the first three credits. Only the final ACK fails.
+				for i := 0; i < cap(r.session.events)-3; i++ {
+					r.session.events <- protocol.Notification(protocol.Credit, struct{}{})
+				}
+			}
+
+			unblock()
+			result := await(t, done)
+			if count != 4 {
+				t.Fatal("terminal overtook queued chunks", count, result)
+			}
+			if mode != "success" {
+				rpcCode(t, result, protocol.RemoteError)
+			} else if result != nil {
+				t.Fatal(result)
+			}
+			if err := streamError(seq); !errors.Is(err, actorx.ErrSetup) {
+				t.Fatal("reused sequence", err)
+			}
+		})
+	}
+}
+
+func TestGatewayIteratorEarlyExit(t *testing.T) {
+	for _, mode := range []string{"break", "panic"} {
+		t.Run(mode, func(t *testing.T) {
+			g, r := fakeStreamGateway(t)
+			entered, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			defer unblock()
+			panicValue := &struct{}{}
+			count := 0
+			done := make(chan error, 1)
+			go func() {
+				var result error
+				defer func() {
+					if got := recover(); got != nil {
+						if mode != "panic" || got != panicValue {
+							result = fmt.Errorf("unexpected panic: %v", got)
+						}
+					} else if mode == "panic" && result == nil {
+						result = errors.New("panic was swallowed")
+					}
+					done <- result
+				}()
+				for _, err := range g.Stream(testCtx(t), protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")}) {
+					if err != nil {
+						result = err
+						return
+					}
+					count++
+					close(entered)
+					<-release
+					if mode == "panic" {
+						panic(panicValue)
+					}
+					break
+				}
+			}()
+
+			m := await(t, r.Events())
+			for i := uint64(1); i <= 4; i++ {
+				if err := acceptTestChunk(r.session, providerChunkMessage(m, i)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			await(t, entered)
+			if err := r.session.accept(protocol.Success(m.ID, protocol.StreamResult{Address: testAddress("one"), FinalSeq: 4})); err != nil {
+				t.Fatal(err)
+			}
+
+			unblock()
+			if err := await(t, done); err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
+				t.Fatal("delivered after early exit", count)
+			}
+			if control := await(t, r.Events()); control.Method != protocol.Cancel {
+				t.Fatal("abandoned current item was acknowledged", control)
+			}
+		})
+	}
+}
+
+func TestGatewayIteratorCancellationAfterFailureTerminal(t *testing.T) {
+	g, r := fakeStreamGateway(t)
+	ctx, cancel := context.WithCancel(testCtx(t))
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	done := make(chan error, 1)
+	go func() {
+		var result error
+		for _, err := range g.Stream(ctx, protocol.CallParams{Address: testAddress("one"), Input: json.RawMessage("null")}) {
+			if err != nil {
+				result = err
+				break
+			}
+			close(entered)
+			<-release
+			cancel()
+		}
+		done <- result
+	}()
+	m := await(t, r.Events())
+	if err := acceptTestChunk(r.session, providerChunkMessage(m, 1)); err != nil {
+		t.Fatal(err)
+	}
+	await(t, entered)
+	a := testAddress("one")
+	terminal := protocol.ErrorResponse(m.ID, protocol.StreamError(protocol.NewError(protocol.RemoteError, "producer failed", &a), 1))
+	if err := r.session.accept(terminal); err != nil {
+		t.Fatal(err)
+	}
+
+	unblock()
+	rpcCode(t, await(t, done), protocol.Canceled)
+	if control := await(t, r.Events()); control.Method != protocol.Cancel {
+		t.Fatal("canceled item was acknowledged", control.Method)
+	}
+}
+
+func TestProviderStreamProtocolAbortDuringDelivery(t *testing.T) {
+	s := newSession()
+	defer s.close()
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	m, done := streamRequest(t, s, func(protocol.Chunk) error {
+		close(entered)
+		<-release
+		return nil
+	})
+	if err := acceptTestChunk(s, providerChunkMessage(m, 1)); err != nil {
+		t.Fatal(err)
+	}
+	await(t, entered)
+
+	// Ingress aborts on a sequence gap while the current body is still active.
+	if err := acceptTestChunk(s, providerChunkMessage(m, 3)); !errors.Is(err, ErrResponse) {
+		t.Fatal("sequence gap was not rejected", err)
+	}
+
+	unblock()
+	if err := await(t, done); !errors.Is(err, actorxdist.ErrProtocol) || !errors.Is(err, actorxdist.ErrOutcomeUnknown) {
+		t.Fatal("lost protocol abort", err)
+	}
+	if control := await(t, s.events); control.Method != protocol.Cancel {
+		t.Fatal("aborted item was acknowledged", control.Method)
+	}
+	select {
+	case control := <-s.events:
+		t.Fatal("unexpected extra control", control.Method)
+	default:
+	}
 }

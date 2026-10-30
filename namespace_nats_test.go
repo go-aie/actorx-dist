@@ -86,20 +86,26 @@ func TestNamespaceNATS(t *testing.T) {
 			t.Fatal("namespace shared business state", got, err)
 		}
 		count := 0
-		if err := tc.addr.Stream[int](ctx, namespaceSeries{Count: 9}, func(got int) error {
+		for got, err := range tc.addr.Stream[int](ctx, namespaceSeries{Count: 9}) {
+			if err != nil {
+				t.Fatal(err)
+			}
 			want := tc.value + count
 			count++
 			if got != want {
-				return fmt.Errorf("chunk %d, want %d", got, want)
+				t.Fatalf("chunk %d, want %d", got, want)
 			}
-			return nil
-		}); err != nil || count != 9 {
-			t.Fatal("stream failed across credit windows", count, err)
 		}
-		canceled := errors.New("consumer canceled")
-		if err := tc.addr.Stream[int](ctx, namespaceSeries{Count: 100}, func(int) error { return canceled }); !errors.Is(err, canceled) {
-			t.Fatal("stream cancellation lost its cause", err)
+		if count != 9 {
+			t.Fatal(count)
 		}
+		for _, err := range tc.addr.Stream[int](ctx, namespaceSeries{Count: 100}) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+
 	}
 	if err := addrA.Stop(nil); err != nil {
 		t.Fatal(err)

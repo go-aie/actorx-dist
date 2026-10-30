@@ -86,7 +86,7 @@ Close settles internal resources in this order; application-facing guarantees li
 
 1. Stop new admission, leave shared Factory queue entries and stop new maintenance scans; retain dedicated controls and management execution.
 2. Request startup cancellation, close business execution and join local descendants, adopting late New/Spawn results. Do not wait for every constructor before closing business execution.
-3. Remove business subscriptions, submit generation terminal evidence and release FAILED. KV failure retains evidence/connection; blocked callbacks keep their reservations.
+3. Remove business subscriptions, submit generation terminal evidence and release FAILED. KV failure retains evidence/connection; blocked loop bodies keep their reservations.
 4. After all owned generations settle, remove dedicated controls and join entered control, maintenance, reply and stream work. Then Stop/Wait Factories, close management and finally the connection.
 
 Each Type's control subscription spans all its instances and FAILED entries. An instance removes only its own business subscription and management entry. Slow cleanup never occupies a Factory handler; other instances can progress. The independent ledger handles unexpected Factory exit without rebuilding management.

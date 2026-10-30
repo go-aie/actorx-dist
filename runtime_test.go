@@ -106,7 +106,7 @@ func mustCreate(t *testing.T, rt *Runtime, key ActorKey, gen string) *creation {
 func installLocalAdapter(rt *Runtime) {
 	var mu sync.Mutex
 	generations := map[ActorKey]string{}
-	rt.invoke = func(ctx context.Context, addr Addr, kind actorx.Kind, msg any, result reflect.Type, yield func(any) error) (any, error) {
+	rt.invoke = func(ctx context.Context, addr Addr, kind actorx.Kind, msg any, result reflect.Type) (any, error) {
 		generation := addr.generation()
 		if generation == "" {
 			mu.Lock()
@@ -124,7 +124,7 @@ func installLocalAdapter(rt *Runtime) {
 		if err != nil {
 			return nil, err
 		}
-		return invokeLocal(ctx, entry.local, rt.specs[addr.key.Type].descriptions, kind, msg, result, yield)
+		return invokeLocal(ctx, entry.local, rt.specs[addr.key.Type].descriptions, kind, msg, result)
 	}
 }
 
@@ -300,12 +300,21 @@ func TestLocalDynamicBridgeAndButtonFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The local probe consumes the upstream core iterator directly. Network
+	// iterator ownership is tested independently through openStream.
+	entry, err := rt.createLocal(ctx, addr.key, addr.generation())
+	if err != nil {
+		t.Fatal(err)
+	}
 	var chunks []int
-	if err := addr.Stream[int](ctx, series{}, func(n int) error {
+	for n, err := range entry.local.Stream[int](ctx, series{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
 		chunks = append(chunks, n)
-		return nil
-	}); err != nil || !reflect.DeepEqual(chunks, []int{2, 3, 4}) {
-		t.Fatal(chunks, err)
+	}
+	if !reflect.DeepEqual(chunks, []int{2, 3, 4}) {
+		t.Fatal(chunks)
 	}
 
 	b := mustAddr(t, rt, "button", "buy")
@@ -426,10 +435,10 @@ func TestDeduplicationAndSingleLiveBindingRead(t *testing.T) {
 	}
 
 	descriptions := rt.specs["probe"].descriptions
-	if _, err := invokeLocal(ctx, first.local, descriptions, actorx.CallKind, read{}, reflect.TypeFor[int](), nil); !errors.Is(err, actorx.ErrReplyType) || called.Load() != 0 {
+	if _, err := invokeLocal(ctx, first.local, descriptions, actorx.CallKind, read{}, reflect.TypeFor[int]()); !errors.Is(err, actorx.ErrReplyType) || called.Load() != 0 {
 		t.Fatal(err, called.Load())
 	}
-	if got, err := invokeLocal(ctx, first.local, descriptions, actorx.CallKind, read{}, reflect.TypeFor[any](), nil); err != nil || got != nil || called.Load() != 1 {
+	if got, err := invokeLocal(ctx, first.local, descriptions, actorx.CallKind, read{}, reflect.TypeFor[any]()); err != nil || got != nil || called.Load() != 1 {
 		t.Fatal(got, err, called.Load())
 	}
 }

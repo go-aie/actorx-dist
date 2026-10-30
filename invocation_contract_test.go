@@ -44,7 +44,7 @@ func testContractNetwork(t *testing.T, options ...any) *network {
 		codecSlots:   make(chan struct{}, 8),
 		payloadSlots: make(chan struct{}, rt.limits.payloads()),
 	}
-	rt.net, rt.invoke = n, n.invokeBusiness
+	rt.net, rt.invoke, rt.openStream = n, n.invokeBusiness, n.openStream
 	return n
 }
 

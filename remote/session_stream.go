@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
+	"sync"
+	"sync/atomic"
 
 	"github.com/go-aie/actorx"
 	"github.com/go-aie/actorx-dist"
@@ -39,6 +42,15 @@ func (p *providerStream) stop(err error) {
 	}
 }
 
+// abortError excludes producer failure, which still permits draining accepted
+// chunks. The caller must hold session.mu.
+func (p *providerStream) abortError() error {
+	if p.err == errProviderStream {
+		return nil
+	}
+	return p.err
+}
+
 // streamControl uses the control reserve in the shared outbound queue.
 // The caller must hold s.mu to serialize sends with session shutdown.
 func (s *session) streamControl(p *providerStream, method string, seq uint64) error {
@@ -58,24 +70,21 @@ func (s *session) streamControl(p *providerStream, method string, seq uint64) er
 	}
 }
 
-func (s *session) invokeStream(
-	ctx context.Context,
-	a protocol.Address,
-	input protocol.InvokeStream,
-	write func(protocol.Chunk) error,
-) error {
+func (s *session) openProviderStream(ctx context.Context, a protocol.Address, input protocol.InvokeStream) (*providerStream, error) {
 	token, err := opaque()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	deadline, ok := ctx.Deadline()
 	if !ok {
-		return actorxdist.ErrProtocol
+		return nil, actorxdist.ErrProtocol
 	}
 	ms := deadline.UnixMilli()
 	params := protocol.StreamParams{
 		CallParams: protocol.CallParams{
-			Address: a, Input: json.RawMessage(input.Content), DeadlineUnixMS: &ms,
+			Address:        a,
+			Input:          json.RawMessage(input.Content),
+			DeadlineUnixMS: &ms,
 		},
 		StreamToken: token,
 		Window:      protocol.StreamWindow(),
@@ -94,21 +103,21 @@ func (s *session) invokeStream(
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return actorx.ErrStopped
+		return nil, actorx.ErrStopped
 	}
 	c := s.calls[input.RequestID]
 	if c == nil || c.sent {
 		s.mu.Unlock()
-		return actorxdist.ErrProtocol
+		return nil, actorxdist.ErrProtocol
 	}
 	if len(s.streams) >= protocol.Capacity {
 		s.mu.Unlock()
-		return actorx.ErrFull
+		return nil, actorx.ErrFull
 	}
 	m, err := s.requestLocked(protocol.Stream, params)
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return nil, err
 	}
 	var id string
 	_ = json.Unmarshal(m.ID, &id)
@@ -121,72 +130,122 @@ func (s *session) invokeStream(
 	default:
 		delete(s.streams, id)
 		s.mu.Unlock()
-		return actorx.ErrFull
+		return nil, actorx.ErrFull
 	}
 	s.mu.Unlock()
 
-	defer func() {
-		s.mu.Lock()
-		if ctx.Err() != nil || !p.terminal ||
-			p.err != nil && p.err != errProviderStream {
-			_ = s.streamControl(p, protocol.Cancel, 0)
-		}
-		delete(s.streams, id)
-		s.mu.Unlock()
-	}()
+	return p, nil
+}
 
-	var consumed uint64
-	for {
-		s.mu.Lock()
-		terminal, finalSeq, endErr := p.terminal, p.seq, p.err
-		s.mu.Unlock()
-		if terminal && (endErr != nil || consumed == finalSeq) {
-			return endErr
+// invokeStream owns provider delivery and credits. Ingress only queues and seals;
+// a validated business failure drains before its error is delivered.
+func (s *session) invokeStream(ctx context.Context, a protocol.Address, input protocol.InvokeStream) iter.Seq2[protocol.Chunk, error] {
+	var used atomic.Bool
+
+	return func(yield func(protocol.Chunk, error) bool) {
+		if !used.CompareAndSwap(false, true) {
+			yield(protocol.Chunk{}, actorx.ErrSetup)
+			return
+		}
+		p, err := s.openProviderStream(ctx, a, input)
+		if err != nil {
+			yield(protocol.Chunk{}, err)
+			return
 		}
 
-		var chunk providerChunk
-		select {
-		case chunk = <-p.queue:
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-p.done:
-			// Success can arrive before queued chunks have been consumed.
-			// Drain them before returning; a failed terminal needs no queue drain.
+		var consumed uint64
+		closeScope := sync.OnceFunc(func() {
 			s.mu.Lock()
-			endErr = p.err
-			finalSeq = p.seq
-			s.mu.Unlock()
-			if endErr != nil || consumed == finalSeq {
-				return endErr
+			if ctx.Err() != nil || !p.terminal || consumed != p.seq || p.abortError() != nil {
+				_ = s.streamControl(p, protocol.Cancel, 0)
 			}
+			delete(s.streams, p.id)
+			p.queue = nil
+			p.sizes = nil
+			p.bytes = 0
+			s.mu.Unlock()
+		})
+		defer closeScope()
+
+		fail := func(err error) {
+			closeScope()
+			yield(protocol.Chunk{}, err)
+		}
+
+		for {
+			if err := ctx.Err(); err != nil {
+				fail(err)
+				return
+			}
+
+			s.mu.Lock()
+			terminal, finalSeq, endErr := p.terminal, p.seq, p.err
+			abortErr := p.abortError()
+			s.mu.Unlock()
+			if terminal && (abortErr != nil || consumed == finalSeq) {
+				if endErr != nil {
+					fail(endErr)
+				}
+				return
+			}
+
+			var chunk providerChunk
 			select {
 			case chunk = <-p.queue:
-			default:
-				return actorxdist.ErrProtocol
+			case <-ctx.Done():
+				continue
+			case <-p.done:
+				// The done channel stays closed while accepted data drains.
+				select {
+				case chunk = <-p.queue:
+				default:
+					continue
+				}
 			}
-		}
 
-		if err := write(protocol.Chunk{
-			MessageType: "json",
-			ContentType: "application/json",
-			Content:     string(chunk.value),
-		}); err != nil {
-			return err
-		}
+			if err := ctx.Err(); err != nil {
+				fail(err)
+				return
+			}
 
-		// Write completes this segment's bounded handoff. Keep its item and
-		// byte charges until that handoff completes, independently of ack delivery.
-		consumed = chunk.seq
-		s.mu.Lock()
-		delete(p.sizes, chunk.seq)
-		p.bytes -= chunk.size
-		err = s.streamControl(p, protocol.Credit, chunk.seq)
-		complete := p.terminal && p.err == nil && consumed == p.seq
-		s.mu.Unlock()
-		// A failed final ack cannot erase validated success after every item
-		// has completed local delivery. Earlier ack or Write failures still fail.
-		if err != nil && !complete {
-			return err
+			s.mu.Lock()
+			abortErr = p.abortError()
+			s.mu.Unlock()
+			if abortErr != nil {
+				fail(abortErr)
+				return
+			}
+
+			if !yield(protocol.Chunk{
+				MessageType: "json",
+				ContentType: "application/json",
+				Content:     string(chunk.value),
+			}, nil) {
+				return
+			}
+
+			if err := ctx.Err(); err != nil {
+				fail(err)
+				return
+			}
+
+			s.mu.Lock()
+			if err := p.abortError(); err != nil {
+				s.mu.Unlock()
+				fail(err)
+				return
+			}
+
+			consumed = chunk.seq
+			delete(p.sizes, chunk.seq)
+			p.bytes -= chunk.size
+			err = s.streamControl(p, protocol.Credit, chunk.seq)
+			complete := p.terminal && p.abortError() == nil && consumed == p.seq
+			s.mu.Unlock()
+			if err != nil && !complete {
+				fail(err)
+				return
+			}
 		}
 	}
 }
@@ -196,6 +255,7 @@ func (s *session) invokeStream(
 func (s *session) failStream(p *providerStream) error {
 	err := errors.Join(actorxdist.ErrOutcomeUnknown, actorxdist.ErrProtocol)
 	p.stop(err)
+	p.err = err
 	if c := s.calls[p.requestID]; c != nil {
 		*c = terminal{sent: true, terminal: true, address: p.address, err: err}
 	}
@@ -256,7 +316,9 @@ func (s *session) acceptStream(p *providerStream, m protocol.Message) error {
 
 		// Execution-time output contradicts a pre-execution rejection, even
 		// when final_seq otherwise matches the received data.
-		refused := m.Error.Code == protocol.ActorUnavailable || m.Error.Code == protocol.TransportMode || m.Error.Code == protocol.UnsupportedOperation
+		refused := m.Error.Code == protocol.ActorUnavailable ||
+			m.Error.Code == protocol.TransportMode ||
+			m.Error.Code == protocol.UnsupportedOperation
 		if json.Unmarshal(m.Error.Data, &data) != nil || data.FinalSeq == nil || *data.FinalSeq != p.seq ||
 			refused && p.seq != 0 {
 			return s.failStream(p)
@@ -266,8 +328,9 @@ func (s *session) acceptStream(p *providerStream, m protocol.Message) error {
 			return s.failStream(p)
 		}
 		result = protocol.NewResult(nil, failure)
+
 		// The normalized business error is retained as evidence; no arbitrary error
-		// type crosses actorx-dist. Stop forwarding queued chunks on the error path.
+		// type crosses actorx-dist. Accepted chunks drain before this error.
 		endErr = errProviderStream
 	} else if protocol.ParseStreamResult(m.Result, p.address, p.seq) != nil {
 		return s.failStream(p)
@@ -275,7 +338,7 @@ func (s *session) acceptStream(p *providerStream, m protocol.Message) error {
 
 	p.stop(endErr)
 	if c := s.calls[p.requestID]; c != nil {
-		*c = terminal{sent: true, terminal: true, address: p.address, result: result}
+		*c = terminal{sent: true, terminal: true, address: p.address, result: result, finalSeq: p.seq}
 	}
 	return nil
 }

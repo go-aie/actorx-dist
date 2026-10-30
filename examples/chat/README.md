@@ -33,7 +33,7 @@ To watch incremental output with a slow consumer:
 go run ./examples/chat/consumer -id assistant-42 -consume-delay 100ms
 ```
 
-`-consume-delay` keeps each consumer callback active for the given duration. The default six chunks exceed the four-chunk window, so continued delivery needs consumption credits. This demonstrates slow consumption; precise window limits and cancellation cleanup are checked by the focused Stream tests. See [Stream semantics](../../docs/runtime.md#stream).
+`-consume-delay` keeps each consumer loop body active for the given duration. The default six chunks exceed the four-chunk window, so continued delivery needs consumption credits. This demonstrates slow consumption; precise window limits and cancellation cleanup are checked by the focused Stream tests. See [Stream semantics](../../docs/runtime.md#stream).
 
 The consumer request has a ten-second total deadline. Ctrl-C cancels it; cancellation requests remote work to stop and does not prove remote cleanup has completed. Closing the consumer leaves the remote Assistant alive. Ctrl-C on the provider closes its Runtime and waits for owned work. All roles accept `-nats nats://SERVER:4222` and must connect to the same service/account.
 

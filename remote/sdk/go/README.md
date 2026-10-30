@@ -50,9 +50,7 @@ A fresh Counter consumer prints `5`, `10`, `5`; another run with the same IDs pr
 | `StreamActor.HandleStream(ctx, message, writer) error` | Write chunks with writer.Write; the SDK submits the terminal after return |
 | `rt.Addr(type, id)` / `addr.Address()` | Local handle / independent address snapshot; generation starts empty |
 | `addr.Call(ctx, message)` | Five-second total budget, including Addr queuing and HTTP; earlier context deadlines win |
-| `addr.Stream(ctx, message, opts...)` | Establish and validate stream/opened; WithStreamTimeout(d) accepts `(0, 60s]`, default five seconds |
-| `stream.Next()` / `Value()` / `Err()` | Single-consumer iteration; check Err after Next returns false; Value is generic JSON |
-| `stream.Close()` | Idempotent; may interrupt Next concurrently; required on early break |
+| `addr.Stream(ctx, message, opts...)` | Lazy, single-use `iter.Seq2[any,error]`; `WithStreamTimeout(d)` accepts `(0, 60s]`, default five seconds |
 | `rt.WaitClosed(ctx)` | Wait for closure or provider disconnection, retaining the reason |
 | `rt.Close(ctx)` | Reject new work, cancel and join tasks, close connections and release instances |
 
@@ -94,11 +92,22 @@ Possible admission without trustworthy generation evidence makes an Addr uncerta
 
 ## Streams and shutdown
 
-Stream validates stream/opened before returning and returns pre-SSE JSON RPC errors directly. stream/opened does not pin generation. Next delivers an item; the next call acknowledges it, including the call after processing the final item. Each segment has its own four-item/32 KiB window, counting queued and current items. Exhaustion requires an explicit terminal; EOF is not success. Partial failure does not undo consumed content. The total deadline includes queuing, connection, execution and consumption, without renewal per chunk.
+`Stream` starts its budget, input snapshot and HTTP request on first iteration. Keep message and its referenced data stable until then. Setup and transport errors arrive as `(nil, err)`; normal completion has no extra item. Repeated or concurrent execution reports local `ErrStreamUsed` without sending another request or affecting the first execution. stream/opened does not pin generation.
 
-Use Next/Value/Err from one consumer. Close may run concurrently with Next, cancels an unfinished stream and joins its reader. Always defer stream.Close so an early break also cleans up. A Stream owns its Addr operation slot until consumption ends or it closes; other operations on that Addr wait.
+```go
+for chunk, err := range actor.Stream(ctx, message) {
+    if err != nil {
+        return err
+    }
+    fmt.Println(chunk)
+}
+```
 
-Use an independent cleanup context for Runtime.Close and preserve its error, for example `cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)`. Canceling a Close/WaitClosed waiting context ends only that wait: Runtime retains background cleanup and can be waited on again. User code ignoring cancellation may prevent complete shutdown.
+A normally returning loop body (including `continue`) acknowledges the current chunk. `break`, an outer `return` and panic cancel/discard it without a successful ACK; panic propagates after cleanup. Each segment has its own four-item/32 KiB window, counting queued and current items. A valid producer failure drains accepted chunks before reporting its original error; cancellation, deadline or invalid evidence interrupts draining. EOF is not success. A final ACK failure preserves the terminal outcome only after valid terminal evidence and complete local delivery. The total deadline includes queuing, connection, execution and consumption, without renewal per chunk.
+
+Iteration owns cleanup and holds the Addr operation slot and Runtime work until the active loop body exits and the reader/control POSTs are joined. Cancellation can stop IO while the body runs; application code must cooperate with context. Other operations on that Addr wait for this scope to finish.
+
+Use an independent cleanup context for Runtime.Close and preserve its error, for example `cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)`. Canceling a Close/WaitClosed waiting context ends only that wait: Runtime retains background cleanup and can be waited on again. Provider handlers and consumer loop bodies ignoring cancellation may prevent complete shutdown.
 
 Provider SSE failure closes the entire Runtime and WaitClosed reports the reason; there is no automatic reconnection. A Call-only consumer has no SSE, and each consumer Stream has a separate SSE. Send, WS, remote Call cancellation, retries and persistence/recovery are not provided.
 

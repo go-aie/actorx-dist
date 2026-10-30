@@ -20,6 +20,12 @@ import (
 )
 
 func TestHTTPStreamNATS(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint("failure=", fail), func(t *testing.T) { testHTTPStreamNATS(t, fail) })
+	}
+}
+
+func testHTTPStreamNATS(t *testing.T, fail bool) {
 	url := os.Getenv("ACTORX_REMOTE_NATS_URL")
 	if url == "" {
 		t.Skip("set ACTORX_REMOTE_NATS_URL to an isolated JetStream server")
@@ -160,7 +166,11 @@ func TestHTTPStreamNATS(t *testing.T) {
 				return
 			}
 		}
-		finish(send(protocol.Success(invoke.ID, protocol.StreamResult{Address: p.Address, FinalSeq: 6}), info.SessionToken))
+		terminal := protocol.Success(invoke.ID, protocol.StreamResult{Address: p.Address, FinalSeq: 6})
+		if fail {
+			terminal = protocol.ErrorResponse(invoke.ID, protocol.StreamError(protocol.NewError(protocol.RemoteError, "business failure", &p.Address), 6))
+		}
+		finish(send(terminal, info.SessionToken))
 	}()
 
 	// Consume all six chunks, preserving the selected identity across the stream.
@@ -224,7 +234,17 @@ func TestHTTPStreamNATS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if terminal.Error != nil || protocol.ParseStreamResult(terminal.Result, fixed, 6) != nil {
+	if fail {
+		if terminal.Error == nil || terminal.Error.Code != protocol.RemoteError {
+			t.Fatal(terminal)
+		}
+		var evidence struct {
+			FinalSeq uint64 `json:"final_seq"`
+		}
+		if json.Unmarshal(terminal.Error.Data, &evidence) != nil || evidence.FinalSeq != 6 || protocol.ErrorAddress(terminal.Error.Data, fixed) != nil {
+			t.Fatal(terminal)
+		}
+	} else if terminal.Error != nil || protocol.ParseStreamResult(terminal.Result, fixed, 6) != nil {
 		t.Fatal(terminal)
 	}
 	if err := <-providerDone; err != nil {

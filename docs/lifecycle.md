@@ -52,6 +52,6 @@ Ordinary business errors end requests; panic, self-stop and explicit Stop end in
 
 Close synchronously stops this Runtime's new call/creation admission. Background work stops and joins owned instances, local descendants, in-flight work and terminal submission before closing management and network resources. Pure caller Close leaves remote objects alive.
 
-Close timeout ends only this wait; background cleanup continues and another Close can wait again. Blocked application callbacks keep their budget. Unwritable KV retains evidence, work and connection needed for submission until storage repair. Neither local cleanup nor one timeout establishes complete shutdown.
+Close timeout ends only this wait; background cleanup continues and another Close can wait again. Blocked application loop bodies keep their budget. Unwritable KV retains evidence, work and connection needed for submission until storage repair. Neither local cleanup nor one timeout establishes complete shutdown.
 
 See [architecture](architecture.md#shutdown-and-fault-handoffs) for internal shutdown order. After a crash, fence the original owner before [explicit recovery](deployment.md#explicit-recovery-and-storage-repair); missing evidence cannot become a fabricated Exit.

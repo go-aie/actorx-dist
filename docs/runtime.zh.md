@@ -80,7 +80,7 @@ report, err := rt.Discover(ctx, actorxdist.DiscoveryQuery{
 | --- | --- |
 | Send 成功 | 目标代已受理，handler 可以尚未完成 |
 | Call 返回 | 收到有效最终结果或确定业务错误；不推定副作用回滚 |
-| Stream 成功 | 收到有效成功终止，序号连续，全部 chunk 已消费且活动回调已退出 |
+| Stream 成功 | 收到有效成功终止，序号连续，全部 chunk 已消费且活动循环体已退出 |
 | 本地校验、容量或明确发布前失败 | 本次业务帧未发送，返回原错误 |
 | 精确目标在 mailbox 前拒绝 | 本次未受理的确定错误，不透明重试 |
 | 可能已发送，缺少所需 ACK、结果或终止 | ErrOutcomeUnknown，并保留取消、期限或传输原因 |
@@ -97,11 +97,22 @@ report, err := rt.Discover(ctx, actorxdist.DiscoveryQuery{
 
 ## Stream
 
-`addr.Stream[C](ctx, msg, yield)` 按序串行调用 yield。缺块、重复、乱序、非法 chunk 或终止均不能成功。有效业务错误是确定失败，可停止消费排队 chunk，不撤销已消费内容；没有有效终止时保留 ErrOutcomeUnknown。有效终止后的取消不额外增加远端结果不明；回调错误保留原 Go error，缺终止证据时同时保留未知结果。
+`addr.Stream[C](ctx, msg)` 返回惰性、单次执行的 `iter.Seq2[C,error]`。校验、编码、选代和准入从首次迭代开始，此前须保持输入及其引用的数据稳定。每项为 `(chunk,nil)`，成功完成没有额外项；有效生产者失败先排空已接受的数据，再交付一次错误。本地取消、期限、关闭、类型错误及损坏的协议证据可以中断排空。缺少有效终态时保留 `ErrOutcomeUnknown`。
 
-所有返回路径都等待活动回调退出。取消或失败后不启动新回调，已观察的业务/协议错误不会被随后等待超时覆盖。阻塞回调继续占窗口、关联和 Runtime 工作预算，并阻止 Close 成功；网络取消仍可在回调阻塞期间传播。回调应及时返回，或用捕获的 context 自行响应取消，不在其中同步等待外层 Stream 或 Runtime.Close。
+```go
+for chunk, err := range addr.Stream[TextChunk](ctx, ask) {
+    if err != nil { return err }
+    if err := save(chunk); err != nil { return err }
+}
+```
 
-每流窗口为4条/64 KiB编码 payload，包含活动回调；Runtime 入站/出站默认合计最多16流，可通过 TransportLimits.Streams 调整。消费完成才按真实编码长度归还额度；`Responder.WriteConsumed` 额外等待该消费确认。部分消费后失败不自动续传，断线取消既有入站流，重连不恢复；迟到帧不能恢复关联或再次触发消费。序号、窗口确认与累计预算详见 [wire 契约](contract.zh.md#统一信封)及[资源表](contract.zh.md#时间及开发资源配置)。
+仅循环体正常结束（含 `continue`）才确认当前项消费成功。`break`、外层 `return` 和 panic 取消请求，不确认当前项；panic 原样传播。外层函数返回的业务错误只属于调用方，生产者观察到取消。重复或并发执行同一序列报告 `actorx.ErrSetup`，不再发请求。
+
+阻塞的循环体继续占窗口、关联及 Runtime 工作预算，取消或 Close 不提前释放。循环体应使用捕获的 context 配合取消，不在数据循环体中同步等待外层 Stream 或 Runtime.Close。错误项交付前先安排取消、丢弃及清理。
+
+每流窗口为4条/64 KiB编码 payload，包含活动循环体；`TransportLimits.Streams` 默认入站/出站合计16流。仅消费成功后按真实编码长度归还额度。只有有效终态与完整本地消费同时成立，最后一次窗口发布失败才保留原终态结果。部分失败不自动续传。
+
+`Responder.WriteConsumed` 等待消费确认，其 context 同时约束准入与收据等待：接受后取消只结束等待，不撤回数据，也不释放消费方预算。nil 证明成功消费；context 错误不能证明是否已接受或消费，不应据此自动重试。Complete 封闭生产并取消请求 context；独立写入 context 仍可等待迟到 ACK。未结清收据受有界关联及 ACK、取消、期限或传输丢失约束。详见 [wire 契约](contract.zh.md#统一信封)及[资源表](contract.zh.md#时间及开发资源配置)。
 
 长流用 `actorx.HandleStream` 的短 handler 启动 `actorx.StartTask(ctx, ...)`：worker 使用快照和任务 context 执行 I/O 或下游 Stream，通过 `reply.Write` 转交内容，串行完成回调调用 `reply.Complete(err)`。状态只在串行 handler/完成回调修改，同一 Actor 可继续处理普通 Notify。启动任务前取得 Addr/Self，worker 不保留分布式上下文视图。
 
@@ -148,7 +159,7 @@ rt, err := actorxdist.NewRuntime(ctx,
 | ExecutionLimits.Pending | 32 | 每个 Actor 已受理但未结清的请求，包含 Send 和 Deferred 请求 |
 | ExecutionLimits.Tasks | 4 | 每个 Actor 的异步任务，直到结果交接或丢弃完成 |
 | TransportLimits.Requests | 128 | 入站、出站分别计算的未结清网络请求；也用于业务核心调用方和共享回复关联容量 |
-| TransportLimits.Streams | 16 | 入站、出站合计的流数，包含活动消费回调 |
+| TransportLimits.Streams | 16 | 入站、出站合计的流数，包含活动消费循环体 |
 | TransportLimits.ContractCacheTypes | 64 | 本 Runtime 调用方契约缓存的逻辑 Type 索引项数；独立于本地注册容量 |
 
 工作从队列取出时释放 mailbox 容量，请求结清时才释放 Pending。Deferred handler 可以已经返回、mailbox 已空，但回复仍占 Pending。StartTask 同时占用任务槽并预留 mailbox 完成槽。

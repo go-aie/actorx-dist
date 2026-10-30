@@ -25,6 +25,7 @@ type terminal struct {
 	sent, terminal bool
 	address        protocol.Address
 	result         protocol.Result
+	finalSeq       uint64
 	err            error
 }
 

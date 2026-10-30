@@ -24,10 +24,12 @@
 // return promptly: Go cannot forcibly stop them, and their locks and execution
 // slots remain held until they actually return.
 //
-// Addr.Stream validates stream/opened before returning an explicitly owned Stream.
-// Iterate with Next/Value, then check Err. Next acknowledges the previous item;
-// Close is required after an early break and may interrupt a blocked Next.
-// Streams hold their Addr operation lock through consumption or Close.
+// Addr.Stream returns a lazy, single-use iter.Seq2[any, error]. Iteration starts
+// the budget, snapshots input and establishes HTTP. Errors are yielded once;
+// validated producer failures follow all accepted chunks. A normal loop body
+// return acknowledges its chunk; break, outer return and panic cancel it.
+// The iterator holds its Addr lock and Runtime work until the body exits and
+// cleanup joins the reader and control POSTs, even after cancellation.
 // StreamActor writes JSON chunks through StreamWriter; the SDK supplies one
 // terminal when the handler returns. Both segments independently account for
 // four items and 32 KiB, including the complete encoded chunk envelope.

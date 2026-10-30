@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -45,6 +47,7 @@ func TestStreamReceiveSequenceAndWindow(t *testing.T) {
 		}
 		s.accept(&nats.Msg{Data: data})
 	}
+
 	for _, tc := range []struct {
 		name   string
 		mutate func(*businessFrame)
@@ -64,7 +67,7 @@ func TestStreamReceiveSequenceAndWindow(t *testing.T) {
 		{"different control route", func(f *businessFrame) { f.Control = "_INBOX.other.control." + f.Correlation }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s := newReceiveStream(&network{}, context.Background(), base, reflect.TypeFor[string](), nil)
+			s := newReceiveStream(&network{}, context.Background(), base, reflect.TypeFor[string]())
 			accept(s, base)
 			if s.err != nil || len(s.queue) != 1 {
 				t.Fatal("first chunk", s.err)
@@ -84,7 +87,7 @@ func TestStreamReceiveSequenceAndWindow(t *testing.T) {
 	}
 
 	t.Run("full window includes callback", func(t *testing.T) {
-		s := newReceiveStream(&network{}, context.Background(), base, reflect.TypeFor[string](), nil)
+		s := newReceiveStream(&network{}, context.Background(), base, reflect.TypeFor[string]())
 		for i := range streamItems {
 			f := base
 			f.Seq = uint64(i + 1)
@@ -94,12 +97,41 @@ func TestStreamReceiveSequenceAndWindow(t *testing.T) {
 			t.Fatal(s.err)
 		}
 
-		<-s.queue // A running callback still consumes its window reservation.
+		<-s.queue // An active loop body still consumes its window reservation.
 		f := base
 		f.Seq = streamItems + 1
 		accept(s, f)
 		if !errors.Is(s.err, ErrProtocol) {
 			t.Fatal("active callback released credit early", s.err)
+		}
+	})
+
+	t.Run("byte window includes active body", func(t *testing.T) {
+		s := newReceiveStream(&network{}, context.Background(), base, reflect.TypeFor[string]())
+		payload, err := json.Marshal(strings.Repeat("x", streamBytes/2-2))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Two encoded values fill the byte budget before the four-item limit.
+		for seq := uint64(1); seq <= 2; seq++ {
+			f := base
+			f.Seq, f.Payload, f.Bytes = seq, payload, len(payload)
+			accept(s, f)
+		}
+		if s.err != nil || s.items != 2 || s.bytes != streamBytes {
+			t.Fatal("valid chunks did not fill the byte window", s.err, s.items, s.bytes)
+		}
+
+		<-s.queue // The active body still owns its encoded bytes.
+		f := base
+		f.Seq = 3
+		accept(s, f)
+		if !errors.Is(s.err, ErrProtocol) || !errors.Is(s.err, ErrOutcomeUnknown) {
+			t.Fatal("byte overflow was not rejected", s.err)
+		}
+		if s.seq != 2 || s.items != 2 || s.bytes != streamBytes || len(s.queue) != 1 {
+			t.Fatal("rejected chunk changed the receive window", s.seq, s.items, s.bytes, len(s.queue))
 		}
 	})
 }
@@ -119,7 +151,12 @@ func TestStreamCreditRequiresExactConsumedChunk(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			s := &sendStream{p: &businessReply{cancel: cancel}, sizes: []int{3, 5}, bytes: 8, wake: make(chan struct{})}
+			s := &sendStream{
+				p:     &businessReply{cancel: cancel},
+				sizes: []int{3, 5},
+				bytes: 8,
+				wake:  make(chan struct{}),
+			}
 			s.credit(tc.frame)
 			if tc.valid {
 				if s.err != nil || s.ack != 1 || s.bytes != 5 || len(s.sizes) != 1 || ctx.Err() != nil {
@@ -180,5 +217,70 @@ func TestStreamContractAndFrames(t *testing.T) {
 		if err := decodeBusiness(encoded, &decoded); !errors.Is(err, ErrProtocol) {
 			t.Fatal("invalid final seq", string(bad), err)
 		}
+	}
+}
+
+func streamError[T any](seq iter.Seq2[T, error]) error {
+	for _, err := range seq {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func TestStreamIteratorLazyAndConcurrentUse(t *testing.T) {
+	rt := testRuntime(t)
+	a := mustAddr(t, rt, "probe", "one")
+	entered, release := make(chan struct{}), make(chan struct{})
+	sentinel := errors.New("open failed")
+	var opens atomic.Int32
+	rt.openStream = func(context.Context, Addr, any, reflect.Type) (*receiveStream, error) {
+		opens.Add(1)
+		close(entered)
+		<-release
+		return nil, sentinel
+	}
+
+	seq := a.Stream[int](testContext(t), series{})
+	if opens.Load() != 0 {
+		t.Fatal("eager open")
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- streamError(seq) }()
+	await(t, entered)
+	if err := streamError(seq); !errors.Is(err, actorx.ErrSetup) {
+		t.Fatal(err)
+	}
+
+	close(release)
+	if err := <-done; err != sentinel || opens.Load() != 1 {
+		t.Fatal(err, opens.Load())
+	}
+}
+
+func TestStreamValuesPreserveNilAndInterfaces(t *testing.T) {
+	if v, err := streamValueAs[any](nil); v != nil || err != nil {
+		t.Fatal(v, err)
+	}
+	if v, err := streamValueAs[*int](nil); v != nil || err != nil {
+		t.Fatal(v, err)
+	}
+
+	var pointer *int
+	if v, err := streamValueAs[any](pointer); v != any(pointer) || err != nil {
+		t.Fatal(v, err)
+	}
+
+	var value error = errors.New("interface value")
+	if v, err := streamValueAs[error](value); v != value || err != nil {
+		t.Fatal(v, err)
+	}
+	if _, err := streamValueAs[int](nil); !errors.Is(err, actorx.ErrReplyType) {
+		t.Fatal(err)
+	}
+	if _, err := streamValueAs[int]("wrong"); !errors.Is(err, actorx.ErrReplyType) {
+		t.Fatal(err)
 	}
 }

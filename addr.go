@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"iter"
 	"reflect"
 	"sync"
+	"sync/atomic"
 
 	"github.com/go-aie/actorx"
 	"github.com/go-aie/actorx-dist/internal/identity"
@@ -157,7 +160,7 @@ func validGeneration(value string) bool {
 	return err == nil && len(raw) == 16 && base64.RawURLEncoding.EncodeToString(raw) == value
 }
 
-func (addr Addr) dispatch(ctx context.Context, kind actorx.Kind, msg any, result reflect.Type, yield func(any) error) (any, error) {
+func (addr Addr) dispatch(ctx context.Context, kind actorx.Kind, msg any, result reflect.Type) (any, error) {
 	if addr.IsZero() || ctx == nil {
 		return nil, actorx.ErrSetup
 	}
@@ -167,19 +170,19 @@ func (addr Addr) dispatch(ctx context.Context, kind actorx.Kind, msg any, result
 	if addr.rt.invoke == nil {
 		return nil, fmt.Errorf("%w: business network invocation is not installed (AD04)", actorx.ErrSetup)
 	}
-	return addr.rt.invoke(ctx, addr, kind, msg, result, yield)
+	return addr.rt.invoke(ctx, addr, kind, msg, result)
 }
 
 // Send waits for admission by the fixed generation through NATS.
 func (addr Addr) Send(ctx context.Context, msg any) error {
-	_, err := addr.dispatch(ctx, actorx.SendKind, msg, nil, nil)
+	_, err := addr.dispatch(ctx, actorx.SendKind, msg, nil)
 	return err
 }
 
 // Call waits for a validated final response from the fixed generation.
 func (addr Addr) Call[R any](ctx context.Context, msg any) (R, error) {
 	var zero R
-	value, err := addr.dispatch(ctx, actorx.CallKind, msg, reflect.TypeFor[R](), nil)
+	value, err := addr.dispatch(ctx, actorx.CallKind, msg, reflect.TypeFor[R]())
 	if err != nil {
 		return zero, err
 	}
@@ -193,17 +196,103 @@ func (addr Addr) Call[R any](ctx context.Context, msg any) (R, error) {
 	return result, nil
 }
 
-// Stream consumes ordered chunks from the fixed generation within a bounded window.
-func (addr Addr) Stream[C any](ctx context.Context, msg any, yield func(C) error) error {
-	if yield == nil {
-		return actorx.ErrSetup
-	}
-	_, err := addr.dispatch(ctx, actorx.StreamKind, msg, reflect.TypeFor[C](), func(value any) error {
-		chunk, ok := value.(C)
-		if !ok {
-			return actorx.ErrReplyType
+// Stream returns a lazy, single-use sequence. A normal loop body acknowledges
+// its chunk; break, return and panic cancel the request without acknowledging it.
+// Keep msg and its referenced data stable until iteration starts.
+func (addr Addr) Stream[C any](ctx context.Context, msg any) iter.Seq2[C, error] {
+	var used atomic.Bool
+
+	return func(yield func(C, error) bool) {
+		var zero C
+		if !used.CompareAndSwap(false, true) || addr.IsZero() || ctx == nil {
+			yield(zero, actorx.ErrSetup)
+			return
 		}
-		return yield(chunk)
-	})
-	return err
+		if err := addr.rt.checkOpen(); err != nil {
+			yield(zero, err)
+			return
+		}
+		if addr.rt.openStream == nil {
+			yield(zero, actorx.ErrSetup)
+			return
+		}
+
+		s, err := addr.rt.openStream(ctx, addr, msg, reflect.TypeFor[C]())
+		if err != nil {
+			yield(zero, err)
+			return
+		}
+		defer s.close()
+
+		fail := func(err error) {
+			s.mu.Lock()
+			s.err = err
+			s.mu.Unlock()
+
+			// Release request resources before the caller handles the error.
+			s.close()
+			yield(zero, err)
+		}
+
+		for {
+			f, ok, err := s.next()
+			if !ok {
+				// next records local aborts itself; a drained producer failure
+				// is reported without turning it into a local cancellation.
+				s.close()
+				if err != nil {
+					yield(zero, err)
+				}
+				return
+			}
+
+			if !takeSlot(s.n.codecSlots) {
+				fail(errors.Join(ErrOutcomeUnknown, actorx.ErrFull))
+				return
+			}
+			value, err := decodeValue(s.n.rt, f.Payload, s.result)
+			<-s.n.codecSlots
+			if err != nil {
+				fail(errors.Join(ErrOutcomeUnknown, err))
+				return
+			}
+
+			chunk, err := streamValueAs[C](value)
+			if err != nil {
+				fail(err)
+				return
+			}
+			if err := s.stopped(); err != nil {
+				fail(err)
+				return
+			}
+
+			if !yield(chunk, nil) {
+				return
+			}
+			if err := s.acknowledge(f); err != nil {
+				fail(err)
+				return
+			}
+		}
+	}
+}
+
+func nilable(t reflect.Type) bool {
+	switch t.Kind() {
+	case reflect.Interface, reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return true
+	}
+	return false
+}
+
+func streamValueAs[C any](value any) (C, error) {
+	var zero C
+	if value == nil && nilable(reflect.TypeFor[C]()) {
+		return zero, nil
+	}
+	if chunk, ok := value.(C); ok {
+		return chunk, nil
+	}
+	return zero, actorx.ErrReplyType
 }

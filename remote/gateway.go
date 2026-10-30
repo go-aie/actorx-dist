@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"iter"
 	"sync"
 	"time"
 
@@ -24,7 +25,7 @@ type registrationOwner interface{ Unregister(context.Context) error }
 type backend struct {
 	register func(context.Context, protocol.RegisterParams, *session) (registrationOwner, error)
 	discover func(context.Context, actorxdist.DiscoveryQuery) (actorxdist.DiscoveryReport, error)
-	stream   func(context.Context, protocol.Address, protocol.InvokeStream, func(protocol.Address, protocol.Chunk) error) (protocol.Address, error)
+	stream   func(context.Context, *protocol.Address, protocol.InvokeStream) iter.Seq2[protocol.Chunk, error]
 	call     func(context.Context, protocol.Address, protocol.Invoke) (protocol.Address, protocol.Result, error)
 }
 
@@ -67,22 +68,29 @@ func NewGateway(rt *actorxdist.Runtime) (*Gateway, error) {
 			}
 			return r, err
 		},
-		stream: func(ctx context.Context, address protocol.Address, input protocol.InvokeStream, yield func(protocol.Address, protocol.Chunk) error) (protocol.Address, error) {
-			raw, _ := json.Marshal(address)
-			a, err := rt.DecodeAddr(raw)
-			if err != nil {
-				return address, err
+		stream: func(ctx context.Context, address *protocol.Address, input protocol.InvokeStream) iter.Seq2[protocol.Chunk, error] {
+			return func(yield func(protocol.Chunk, error) bool) {
+				raw, _ := json.Marshal(*address)
+				a, err := rt.DecodeAddr(raw)
+				if err != nil {
+					yield(protocol.Chunk{}, err)
+					return
+				}
+
+				// Preserve generation evidence even for an empty or failed stream.
+				snapshot := func() {
+					raw, _ := a.MarshalJSON()
+					_ = json.Unmarshal(raw, address)
+				}
+				defer snapshot()
+
+				for c, err := range a.Stream[protocol.Chunk](ctx, input) {
+					snapshot()
+					if !yield(c, err) {
+						return
+					}
+				}
 			}
-			err = a.Stream[protocol.Chunk](ctx, input, func(c protocol.Chunk) error {
-				raw, _ := a.MarshalJSON()
-				var selected protocol.Address
-				_ = json.Unmarshal(raw, &selected)
-				return yield(selected, c)
-			})
-			if raw, e := a.MarshalJSON(); e == nil {
-				_ = json.Unmarshal(raw, &address)
-			}
-			return address, err
 		},
 		call: func(ctx context.Context, address protocol.Address, input protocol.Invoke) (protocol.Address, protocol.Result, error) {
 			raw, _ := json.Marshal(address)

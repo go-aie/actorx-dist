@@ -132,4 +132,4 @@ remote wire 版本与 actorx-dist Type 契约分别管理。现在所有注册�
 
 DTO 的 `Invoke.request_id` 是 gateway 内部关联，与 provider RPC ID、actorx-dist 关联分别管理，不提供去重。DTO 包身份及生成的 Bindings 参与 Type 指纹，Go 代理结构体名称不参与。
 
-`Gateway.Stream(ctx, params, yield)` 消费 actorx-dist Stream，回调返回才确认该项。HTTP 使用 `OpenStream` / `ConsumerStream.Run` 和 `Gateway.Control` 关联 consumer 确认与取消；`AcceptEncoded` 保留 provider 消息的实际字节用于窗口计数。流控规则统一见[协议](protocol.zh.md#流控与终态)，消费方式见 [Chat 示例](../examples/chat/README.zh.md)。
+`Gateway.Stream(ctx, params)` 返回惰性、单次执行的 `iter.Seq2[StreamChunk,error]`，每项携带选定 Address 与 JSON Value。HTTP 在 `OpenStream` 后迭代 `ConsumerStream.Messages`，通过 `Gateway.Control` 关联消费 ACK 和取消。循环体正常完成才确认当前项，提前退出取消请求；有效生产者失败先排空已接受数据，再交付终态错误。两个入口共用准入、backend 消费与清理流程。`AcceptEncoded` 保留 provider 原始消息字节用于计费。[Go SDK](../sdk/go/README.zh.md) 采用相同的迭代模型；[Python SDK](../sdk/python/README.zh.md) 保留异步迭代，在请求下一项时确认上一项。另见[协议](protocol.zh.md#流控与终态)及[进程验收](development.zh.md#按需联调)。
